@@ -8,6 +8,7 @@
 
 #include "gfx/DieFaces.hpp"
 #include "gfx/Mesh.hpp"
+#include "gfx/Take.hpp"
 #include "model/Computer.hpp"
 #include "model/Drawers.hpp"
 #include "model/Game.hpp"
@@ -16,6 +17,7 @@
 #include "model/Strategy.hpp"
 #include "model/TableFile.hpp"
 #include "model/Settings.hpp"
+#include "model/Stats.hpp"
 
 #include <fstream>
 
@@ -504,6 +506,62 @@ int main() {
         std::filesystem::remove_all(std::filesystem::path(file).parent_path());
     }
 
+    std::cout << "[stats]\n";
+    {
+        namespace sx = model::stats;
+        // Two finished games, played out by the computer engine on a table of
+        // a person seat (driven as Easy here) and a Hard computer.
+        auto finish = [&](std::uint64_t seed) {
+            model::GameStore s;
+            model::GameJournal j{s};
+            s.set_door([&j] { return j.open(); });
+            model::verbs::new_game(s, j, {{"Ann", model::Seat::Computer, model::Level::Easy},
+                                          {"Bot", model::Seat::Computer, model::Level::Hard}}, seed);
+            int guard = 0;
+            while (!s.state().over() && guard++ < 5000)
+                model::computer::apply(s, j, model::computer::decide(s.state(), &table));
+            auto g = s.state();
+            g.players[0].seat = model::Seat::Human;   // record "Ann" as a person
+            return g;
+        };
+        const auto g1 = finish(11), g2 = finish(12);
+        sx::History h;
+        h.add(sx::record(g1, "2026-10-21 10:00"));
+        h.add(sx::record(g2, "2026-10-21 11:00"));
+        const auto r1 = sx::record(g1, "x");
+        check("stats: a record holds every seat's total", r1.seats.size() == 2 &&
+              r1.seats[0].total == g1.players[0].card.total() && r1.seats[1].total == g1.players[1].card.total());
+        check("stats: a computer's key carries its level", sx::key(r1.seats[1]) == "Bot (Hard)" && sx::key(r1.seats[0]) == "Ann");
+        const auto ps = h.players();
+        const auto* ann = &ps[0];
+        check("stats: people listed before computers", ps.size() == 2 && !ps[0].computer && ps[1].computer);
+        const int wins_ann = int(r1.won(0)) + int(sx::record(g2, "").won(0));
+        const double avg = (g1.players[0].card.total() + g2.players[0].card.total()) / 2.0;
+        check("stats: games, wins, average, best per name", ann->games == 2 && ann->wins == wins_ann &&
+              std::fabs(ann->average - avg) < 1e-9 &&
+              ann->best == std::max(g1.players[0].card.total(), g2.players[0].card.total()));
+        const auto top = h.top(3);
+        check("stats: high scores, highest first", top.size() == 3 && top[0].total >= top[1].total && top[1].total >= top[2].total);
+        sx::GameRecord tie;
+        tie.seats = {{"A", model::Seat::Human, model::Level::Medium, 200}, {"B", model::Seat::Human, model::Level::Medium, 200}};
+        check("stats: a tie is a win for both", tie.won(0) && tie.won(1));
+        sx::GameRecord solo;
+        solo.seats = {{"A", model::Seat::Human, model::Level::Medium, 300}};
+        check("stats: a solo game is not a win", !solo.won(0));
+        check("stats: previous best ignores the latest game", h.previous_best("Ann") == g1.players[0].card.total());
+
+        const auto file = (std::filesystem::temp_directory_path() / "yatze_selftest_hist" / "history.json").string();
+        std::filesystem::remove_all(std::filesystem::path(file).parent_path());
+        sx::History back;
+        check("stats: history round-trips", h.save(file) && back.load(file) && back.games() == h.games());
+        { std::ofstream bad(file); bad << "[1,2"; }
+        check("stats: a broken file loads as empty", !back.load(file) && back.games().empty());
+        sx::History big;
+        for (std::size_t i = 0; i < sx::History::kMax + 5; ++i) big.add(solo);
+        check("stats: history is capped", big.games().size() == sx::History::kMax);
+        std::filesystem::remove_all(std::filesystem::path(file).parent_path());
+    }
+
     std::cout << "[3d: the die's faces]\n";
     {
         namespace gfx = yatze::gfx;
@@ -527,6 +585,83 @@ int main() {
         for (const auto& v : mesh.verts)
             if (std::fabs(v.px) > 0.5001f || std::fabs(v.py) > 0.5001f || std::fabs(v.pz) > 0.5001f) inside = false;
         check("3d: the rounded die fits its unit cube", inside && !mesh.index.empty());
+    }
+
+    std::cout << "[3d: the take]\n";
+    {
+        namespace gfx = yatze::gfx;
+        int wrong_face = 0, moved_held = 0, overlap = 0, off_table = 0, not_flat = 0, cropped = 0;
+        double tmin = 1e9, tmax = 0, tsum = 0;
+        const int takes = 300;
+        std::uint64_t rs = 777;
+        auto rnd = [&rs](int n) { rs = rs * 6364136223846793005ull + 1442695040888963407ull; return int((rs >> 33) % std::uint64_t(n)); };
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int k = 0; k < takes; ++k) {
+            gfx::Shot shot;
+            shot.seed = 1000 + std::uint64_t(k);
+            shot.aspect = 1.2f + 0.1f * float(k % 6);
+            for (int i = 0; i < 5; ++i) {
+                shot.values[i] = 1 + rnd(6);
+                shot.held[i] = (k % 3 == 1) && rnd(3) == 0;
+                shot.slots[i] = {(float(i) - 2.0f) * 1.32f, 0.5f, 1.65f};
+            }
+            const auto take = gfx::shoot(shot);
+            const double d = take.duration();
+            tmin = std::min(tmin, d); tmax = std::max(tmax, d); tsum += d;
+            const auto& end = take.frames.back();
+            for (int i = 0; i < 5; ++i) {
+                if (gfx::value_facing(end[i].rot, {0, 1, 0}) != shot.values[i]) ++wrong_face;
+                if (std::fabs(end[i].pos.y - 0.5f) > 1e-3f ||
+                    gfx::dot(end[i].rot.rotate(gfx::face_normal(shot.values[i])), {0, 1, 0}) < 0.999f) ++not_flat;
+                if (shot.held[i]) {
+                    for (const auto& f : take.frames)
+                        if (gfx::length(f[i].pos - shot.slots[i]) > 1e-4f) { ++moved_held; break; }
+                    continue;
+                }
+                if (std::fabs(end[i].pos.x) > gfx::kRailX || end[i].pos.z < gfx::kRailBack || end[i].pos.z > gfx::kRailFront)
+                    ++off_table;
+                for (int j = i + 1; j < 5; ++j)
+                    if (gfx::length(end[i].pos - end[j].pos) < 0.97f) ++overlap;
+            }
+            // Never cropped: every die's centre (plus a margin) inside the frame, every frame.
+            for (std::size_t f = 0; f < take.frames.size(); ++f) {
+                const auto& c = take.cams[f];
+                const auto vp = gfx::Mat4::perspective(shot.fov, shot.aspect, 0.1f, 80.0f) *
+                                gfx::Mat4::look_at(c.eye, c.at, {0, 1, 0});
+                bool in = true;
+                for (const auto& dp : take.frames[f]) {
+                    const auto& m = vp.m;
+                    const float x = m[0] * dp.pos.x + m[4] * dp.pos.y + m[8] * dp.pos.z + m[12];
+                    const float y = m[1] * dp.pos.x + m[5] * dp.pos.y + m[9] * dp.pos.z + m[13];
+                    const float w = m[3] * dp.pos.x + m[7] * dp.pos.y + m[11] * dp.pos.z + m[15];
+                    if (w <= 0 || std::fabs(x / w) > 0.92f || std::fabs(y / w) > 0.92f) in = false;
+                }
+                if (!in) { ++cropped; break; }
+            }
+        }
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "%d takes in %.2f s; length %.1f .. %.1f s, mean %.1f", takes, secs, tmin, tmax, tsum / takes);
+        std::cout << "        " << buf << "\n";
+        check("take: every take ends on the drawn faces", wrong_face == 0, std::to_string(wrong_face));
+        check("take: every die ends flat on the felt", not_flat == 0, std::to_string(not_flat));
+        check("take: held dice never move", moved_held == 0, std::to_string(moved_held));
+        check("take: no two dice end inside each other", overlap == 0, std::to_string(overlap));
+        check("take: the dice stay on the table", off_table == 0, std::to_string(off_table));
+        check("take: the camera never crops a die (every frame)", cropped == 0, std::to_string(cropped) + " takes cropped");
+        check("take: lengths vary (1..5.5 s), none instant, none endless", tmin > 1.0 && tmax < 5.5 && tmax - tmin > 0.8, buf);
+        gfx::Shot a;
+        a.values = {1, 2, 3, 4, 5};
+        a.seed = 99;
+        const auto t1 = gfx::shoot(a), t2 = gfx::shoot(a);
+        bool same = t1.frames.size() == t2.frames.size();
+        for (std::size_t f = 0; same && f < t1.frames.size(); ++f)
+            for (int i = 0; i < 5; ++i)
+                if (gfx::length(t1.frames[f][i].pos - t2.frames[f][i].pos) > 0) same = false;
+        check("take: a seed replays exactly", same);
+        a.seed = 100;
+        check("take: another seed, another take", gfx::shoot(a).frames.size() != t1.frames.size() ||
+              gfx::length(gfx::shoot(a).frames[30][0].pos - t1.frames[30][0].pos) > 0.01f);
     }
 
     std::cout << "[drawers]\n";

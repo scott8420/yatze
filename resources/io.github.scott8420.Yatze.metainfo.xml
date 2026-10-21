@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata. Validate with appstreamcli validate (no-net option
+     for offline) on this file. The id and launchable must match YATZE_APP_ID
+     and the .desktop file name. (No double hyphens in XML comments.) -->
+<component type="desktop-application">
+  <id>io.github.scott8420.Yatze</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>Yatzé!</name>
+  <summary>Roll five dice, fill thirteen boxes</summary>
+  <developer id="io.github.scott8420">
+    <name>Scott Combs</name>
+  </developer>
+
+  <description>
+    <p>
+      The classic five-dice game for GNOME. Every roll is real tumbling physics,
+      filmed from your seat at the table, then the dice line up so you can read
+      them. Play alone, with friends at one computer, or against computer
+      players; the hardest of them plays perfectly.
+    </p>
+    <ul>
+      <li>Full rules: upper bonus, Yatzé bonuses and the Joker</li>
+      <li>Live hints from an exact strategy engine: what to keep, which box to take</li>
+      <li>Computer players at three levels, mixed freely with people</li>
+      <li>High scores and every player's record</li>
+      <li>Red or ivory dice, undo for holds and boxes, full keyboard play</li>
+    </ul>
+    <p>
+      Yatzé! is not affiliated with Hasbro's Yahtzee.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.scott8420.Yatze.desktop</launchable>
+  <provides><binary>yatze</binary></provides>
+
+  <url type="homepage">https://github.com/scott8420/yatze</url>
+  <url type="bugtracker">https://github.com/scott8420/yatze/issues</url>
+  <url type="vcs-browser">https://github.com/scott8420/yatze</url>
+
+  <categories>
+    <category>Game</category>
+    <category>BoardGame</category>
+  </categories>
+  <keywords>
+    <keyword>dice</keyword>
+    <keyword>yahtzee</keyword>
+    <keyword>yatzy</keyword>
+  </keywords>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.7.0" date="2026-10-21">
+      <description><p>Physics dice, computer players, hints and high scores.</p></description>
+    </release>
+  </releases>
+</component>

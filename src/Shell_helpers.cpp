@@ -4,6 +4,10 @@
 
 #include <glibmm/main.h>
 #include <glibmm/miscutils.h>
+#include <glibmm/datetime.h>
+
+#include <algorithm>
+#include <cstdlib>
 #include <gtkmm/editable.h>
 #include <gtkmm/textview.h>
 
@@ -32,6 +36,44 @@ void Shell::apply_settings() {  // helper
     m_dice.set_red(red);
 }
 
+std::string Shell::history_file() const {  // helper
+    return Glib::build_filename(Glib::get_user_data_dir(), "yatze", "history.json");
+}
+
+// The rising edge of game over: record the game once, make the last box final
+// (no undoing a recorded game), say who won and any new best, and open the
+// standings.
+void Shell::check_game_over() {  // helper
+    const auto& g = m_store.state();
+    if (!g.over() || m_recorded || g.players.empty()) return;
+    m_recorded = true;
+    m_journal.clear();
+    const std::string now = Glib::DateTime::create_now_local().format("%Y-%m-%d %H:%M").raw();
+    auto rec = model::stats::record(g, now);
+    m_history.add(rec);
+    m_history.save(history_file());
+
+    const auto lead = g.leaders();
+    if (g.players.size() == 1) m_news = std::to_string(g.players[0].card.total()) + " points";
+    else if (lead.size() > 1)  m_news = "A tie at " + std::to_string(g.players[lead[0]].card.total());
+    else m_news = g.players[lead[0]].name + " wins with " + std::to_string(g.players[lead[0]].card.total());
+    // A person's new best (only once they have a record to beat).
+    for (const auto& s : rec.seats) {
+        if (s.seat != model::Seat::Human) continue;
+        const int prev = m_history.previous_best(model::stats::key(s));
+        if (prev > 0 && s.total > prev) {
+            m_news += " \u2014 a new best for " + s.name + "!";
+            break;
+        }
+    }
+    if (const auto top = m_history.top(1); !top.empty() && top[0].when == now && m_history.games().size() > 1 &&
+        std::any_of(rec.seats.begin(), rec.seats.end(), [&](const auto& s) { return s.total == top[0].total; }))
+        m_news += " Top score!";
+    m_said.set_text(m_news);
+    if (auto lg = log::get(log::Area::Game)) lg->info("game over: {}", m_news);
+    if (!m_drawers.is_open(model::Drawers::Side::Right) && m_drawers.show(model::Drawers::Side::Right)) apply_drawers();
+}
+
 std::string Shell::table_file() const {  // helper: the UI resolves the path; the model reads it
     return Glib::build_filename(Glib::get_user_config_dir(), "yatze", "table.json");
 }
@@ -46,6 +88,7 @@ bool Shell::human_turn() const {  // helper
 void Shell::schedule_computer() {  // helper
     const auto& g = m_store.state();
     if (m_cpu_tick.connected() || g.players.empty() || g.over() || human_turn()) return;
+    if (m_dice3d.busy()) return;                 // its roll is still playing; signal_settled re-schedules
     namespace cpu = model::computer;
     const auto next = cpu::decide(g, m_engine.ready() ? &m_engine.table() : nullptr);
     int ms = 250;                                             // waiting for the odds: poll
@@ -55,28 +98,37 @@ void Shell::schedule_computer() {  // helper
         case cpu::Step::Kind::Score: ms = 1100; break;       // let you see the dice it scores
         case cpu::Step::Kind::None:  break;
     }
+    static const double speed = [] {   // YATZE_SPEED: testing only (see DiceView::tick)
+        const char* e = std::getenv("YATZE_SPEED");
+        const double v = e ? std::atof(e) : 1.0;
+        return v > 0 ? v : 1.0;
+    }();
     m_cpu_tick = Glib::signal_timeout().connect([this] {
         on_computer_step();
         return false;
-    }, ms);
+    }, std::max(10, int(ms / speed)));
 }
 
 void Shell::repaint() {  // helper: dice, card, status, actions
     const auto& g = m_store.state();
     const bool human = human_turn();
+    const bool rolling = m_dice3d.busy();       // the take is playing: nothing new is revealed yet
     m_dice.set(g.dice, g.held, human && model::verbs::can_hold(g));
     // The roll key changes exactly when new dice are rolled: game, round, seat, roll.
     const std::uint64_t key = (m_game_serial << 24) | (std::uint64_t(g.round) << 16) |
                               (std::uint64_t(g.current) << 8) | std::uint64_t(g.rolls_used);
     m_dice3d.set(g.dice, g.held, human && model::verbs::can_hold(g), key);
-    m_card.set(g, human);
-    m_status.set_text(status_text());
-    if (m_act_roll) m_act_roll->set_enabled(human && model::verbs::can_roll(g));
+    const bool rolling_now = m_dice3d.busy();   // set() may just have started a take
+    m_card.set(g, human && !rolling_now, !rolling_now);
+    m_status.set_text(rolling_now ? std::string("Rolling\u2026") : status_text());
+    if (m_act_roll) m_act_roll->set_enabled(human && !rolling_now && model::verbs::can_roll(g));
+    (void)rolling;
     update_undo_ui();
     schedule_computer();
     m_roll.set_label(g.over() ? "Game over" : g.rolls_used == 0 ? "Roll"
                      : "Roll  (" + std::to_string(g.rolls_left()) + " left)");
-    if (m_drawers.is_open(model::Drawers::Side::Right)) m_stats.show(g);
+    check_game_over();
+    if (m_drawers.is_open(model::Drawers::Side::Right)) m_stats.show(g, m_history, m_news);
     refresh_hints();
 }
 
@@ -88,8 +140,9 @@ void Shell::refresh_hints() {  // helper
     std::array<bool, 5> glow{};
     int box = -1;
     const bool open = m_drawers.is_open(model::Drawers::Side::Left);
-    if (open) m_hints.show(g, m_engine);
-    if (open && human_turn() && m_engine.ready() && g.rolls_used > 0) {
+    const bool rolling = m_dice3d.busy();
+    if (open) m_hints.show(g, m_engine, rolling);
+    if (open && !rolling && human_turn() && m_engine.ready() && g.rolls_used > 0) {
         const auto a = model::strategy::advise(m_engine.table(), g.player().card, g.dice, g.rolls_left());
         if (a.roll_on && !a.holds.empty()) glow = a.holds.front().hold;
         else if (!a.boxes.empty()) box = model::index(a.boxes.front().c);
@@ -138,7 +191,7 @@ void Shell::update_undo_ui() {  // helper
 // standings read as the drawer opens; on close the keyboard returns to play.
 void Shell::apply_drawers() {  // helper
     using Side = model::Drawers::Side;
-    if (m_drawers.is_open(Side::Right)) m_stats.show(m_store.state());
+    if (m_drawers.is_open(Side::Right)) m_stats.show(m_store.state(), m_history, m_news);
     refresh_hints();
     m_left_drawer.set_reveal_child(m_drawers.is_open(Side::Left));
     // The hints drawer covers the left of the table: let the dice make room.
@@ -152,6 +205,18 @@ void Shell::apply_drawers() {  // helper
         inset = float(drawer_w - m_play.get_margin_start());
     }
     m_dice3d.set_left_inset(inset);
+    // The standings drawer covers the right of the window; if it reaches over
+    // the table, the row moves left the same way.
+    float inset_r = 0;
+    if (m_drawers.is_open(Side::Right)) {
+        int rw = 0, rh = 0;
+        m_stats.get_size_request(rw, rh);
+        const int drawer_w = std::max(m_stats.get_width(), rw);
+        const int drawer_left = m_overlay.get_width() - drawer_w;
+        const int view_right = m_play.get_width() - m_play.get_margin_end();
+        inset_r = float(std::max(0, view_right - drawer_left));
+    }
+    m_dice3d.set_right_inset(inset_r);
     m_right_drawer.set_reveal_child(m_drawers.is_open(Side::Right));
     m_scrim.set_visible(m_drawers.scrim());
     if (!m_drawers.scrim()) m_roll.grab_focus();

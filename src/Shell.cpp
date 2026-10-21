@@ -38,6 +38,7 @@ Shell::~Shell() {   // no tick into a dead window
 void Shell::build_ui() {
     build_shell();     // zone (calls build_drawers)
     bind_actions();    // bindings
+    m_history.load(history_file());
     m_settings = model::settings::load(settings_file());
     m_act_dice->change_state(Glib::ustring(model::settings::key(m_settings.dice)));
     apply_settings();

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Yatzé! app icon (placeholder until the Curvz logo): a red die and an ivory
+     die on felt. Full colour, for the app grid; the in-app logo is the
+     symbolic icon in icons/scalable/apps. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <radialGradient id="felt" cx="50%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#2b8058"/>
+      <stop offset="1" stop-color="#14452f"/>
+    </radialGradient>
+    <linearGradient id="red" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e2342f"/>
+      <stop offset="1" stop-color="#a3120f"/>
+    </linearGradient>
+    <linearGradient id="ivory" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffdf6"/>
+      <stop offset="1" stop-color="#e4dfcf"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="22" fill="url(#felt)"/>
+  <!-- ivory die, behind: a five -->
+  <g transform="rotate(-14 78 48)" filter="url(#shadow)">
+    <rect x="54" y="24" width="48" height="48" rx="10" fill="url(#ivory)"/>
+    <g fill="#1d1d22">
+      <circle cx="66" cy="36" r="4.6"/><circle cx="90" cy="36" r="4.6"/>
+      <circle cx="78" cy="48" r="4.6"/>
+      <circle cx="66" cy="60" r="4.6"/><circle cx="90" cy="60" r="4.6"/>
+    </g>
+  </g>
+  <!-- red die, in front: a six -->
+  <g transform="rotate(10 50 80)" filter="url(#shadow)">
+    <rect x="24" y="54" width="52" height="52" rx="11" fill="url(#red)"/>
+    <g fill="#fbf8f0">
+      <circle cx="37" cy="67" r="4.8"/><circle cx="63" cy="67" r="4.8"/>
+      <circle cx="37" cy="80" r="4.8"/><circle cx="63" cy="80" r="4.8"/>
+      <circle cx="37" cy="93" r="4.8"/><circle cx="63" cy="93" r="4.8"/>
+    </g>
+  </g>
+</svg>

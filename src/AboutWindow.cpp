@@ -56,8 +56,8 @@ AboutWindow::AboutWindow(Gtk::Window& parent) {
     note->set_margin_top(6);
     note->add_css_class("dim-label");
     note->set_markup(
-        "Version 0.1 (s001). Built with gtkmm 4 from the Cairn seed.\n"
-        "Scott and Claude, 2026.");
+        "Version " YATZE_VERSION ". Built with gtkmm 4 from the Cairn seed.\n"
+        "Scott and Claude, 2026. MIT licence.");
     page->append(*note);
 
     auto* close_btn = Gtk::make_managed<widgets::Button>(

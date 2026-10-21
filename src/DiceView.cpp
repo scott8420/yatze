@@ -2,6 +2,7 @@
 #include "Log.hpp"
 #include "gfx/DieFaces.hpp"
 #include "gfx/Mesh.hpp"
+#include "gfx/Take.hpp"
 
 #include <epoxy/gl.h>
 #include <gdkmm/cursor.h>
@@ -10,6 +11,7 @@
 #include <gtkmm/gestureclick.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <string>
 
@@ -249,8 +251,9 @@ void DiceView::set(const model::Dice& dice, const std::array<bool, 5>& held, boo
         for (int f : dice) seed = seed * 7 + std::uint64_t(f);
         plan_roll(seed);
         m_from     = m_pose;
-        m_phase    = Phase::Drop;
-        m_phase_t0 = -1;                  // anchored by the next tick (tick())
+        m_phase    = Phase::Take;
+        m_phase_t0 = -1;
+        m_hover    = -1;                  // no stale highlight on a rolling die                  // anchored by the next tick (tick())
     }
     start_ticking();
     queue_render();
@@ -267,6 +270,13 @@ void DiceView::set_left_inset(float px) {
     if (std::fabs(frac - m_inset_frac) < 1e-3f) return;
     m_inset_frac = frac;
     start_ticking();   // the presented camera eases to the new framing
+}
+
+void DiceView::set_right_inset(float px) {
+    const float frac = get_width() > 0 ? std::max(0.0f, px) / float(get_width()) : 0.0f;
+    if (std::fabs(frac - m_inset_right) < 1e-3f) return;
+    m_inset_right = frac;
+    start_ticking();
 }
 
 void DiceView::set_glow(const std::array<bool, 5>& glow) {
@@ -292,64 +302,42 @@ DiceView::Cam DiceView::present_cam() const {
     // A drawer over the left of the view (the hints): fit the row to what is
     // still uncovered, and centre it there.
     const float cover = std::clamp(m_inset_frac, 0.0f, 0.6f);
+    const float cover_r = std::clamp(m_inset_right, 0.0f, 0.6f);
     const float half = 2.0f * kRowGap + 0.5f + 0.55f;                 // the row, plus margin
     const float th = std::tan(kFov / 2);
-    const float aspect = std::max(0.5f, m_aspect * (1.0f - cover));
+    const float aspect = std::max(0.5f, m_aspect * (1.0f - cover - cover_r));
     const float dist = std::max(half / (th * aspect), 1.6f / th);
     const float el = m_present_el;                                      // ~46-54 deg: reading the tops
-    const float shift = cover * th * m_aspect * dist;                   // world units at the row
+    const float shift = (cover - cover_r) * th * m_aspect * dist;      // world units at the row
     const Vec3 at{-shift, 0.5f, kRowZ + 0.15f};
     return {at + Vec3{0, std::sin(el), std::cos(el)} * dist, at};
 }
 
-// Where the unheld dice fall, and where the seated player's head is this time.
+// Shoot this roll's take (gfx/Take: the physics run to rest, landing on the
+// drawn faces, and the camera planned over it), then draw the pace of what
+// follows: the beat on the fallen dice, the glide, the presented height.
 void DiceView::plan_roll(std::uint64_t seed) {
-    Rng r{seed};
-    // Scatter: no two dice closer than 1.35, none on top of a held die.
-    std::array<Vec3, 5> spot{};
+    gfx::Shot shot;
+    shot.seed   = seed;
+    shot.fov    = kFov;
+    shot.aspect = m_aspect;
     for (int i = 0; i < 5; ++i) {
-        if (m_held[i]) { spot[i] = present_pose(i).pos + Vec3{0, 0, kHeldFwd}; continue; }
-        for (int tries = 0; tries < 200; ++tries) {
-            const Vec3 c{r.range(-2.4f, 2.4f), 0.5f, r.range(-2.2f, 0.1f)};
-            bool clear = true;
-            for (int k = 0; k < i; ++k)
-                if (gfx::length(c - spot[k]) < 1.35f) { clear = false; break; }
-            for (int k = i + 1; k < 5; ++k)
-                if (m_held[k] && gfx::length(c - (present_pose(k).pos + Vec3{0, 0, kHeldFwd})) < 1.35f) clear = false;
-            spot[i] = c;
-            if (clear) break;
-        }
-        m_scatter[i].pos = spot[i];
-        m_scatter[i].rot = gfx::show(m_dice[i], {0, 1, 0}, r.range(0.0f, 2.0f * kPi));
+        shot.values[i] = m_dice[i];
+        shot.held[i]   = m_held[i];
+        shot.slots[i]  = present_pose(i).pos + Vec3{0, 0, kHeldFwd};
     }
-    // Held dice wait at the front edge, lying result-up like the rest (seen from
-    // above, a die turned toward you would show the wrong number on top).
-    for (int i = 0; i < 5; ++i)
-        if (m_held[i]) m_scatter[i] = {spot[i], gfx::show(m_dice[i], {0, 1, 0}, r.range(-0.25f, 0.25f))};
+    m_take = gfx::shoot(shot);
+    const auto& end = m_take.frames.back();
+    for (int i = 0; i < 5; ++i) m_scatter[i] = {end[i].pos, end[i].rot};
+    const auto cam = m_take.cams.back();
+    m_roll_cam = {cam.eye, cam.at};
 
-    // The pace of this roll: each die lands at its own moment, and the pause
-    // and the glide vary a little -- never the same clockwork twice.
-    m_drop = 0;
-    for (int i = 0; i < 5; ++i) {
-        m_fall[i] = r.range(0.55f, 1.0f);
-        m_drop = std::max(m_drop, double(m_fall[i]));
-    }
-    m_rest  = r.range(1.1f, 1.8f);
+    Rng r{seed ^ 0xA5A5A5A5ull};
+    m_rest  = r.range(0.9f, 1.5f);
     m_glide = r.range(1.6f, 2.3f);
-    m_present_el = r.range(0.80f, 0.94f);   // the straight-on height breathes a little too
-
-    // The seated viewpoint: frame every die, from a fresh angle each roll.
-    Vec3 c{};
-    for (const auto& s : spot) c = c + s;
-    c = c * 0.2f;
-    float radius = 0;
-    for (const auto& s : spot) radius = std::max(radius, gfx::length(s - c));
-    const float az = r.range(-0.42f, 0.42f);                 // a lean left or right
-    const float el = r.range(0.62f, 1.36f);                  // 35 deg (across the felt) .. 78 deg (nose down)
-    const float fit = (radius + 0.9f) / std::tan(kFov / 2) * 1.05f;
-    const float dist = std::max(fit, r.range(8.0f, 10.0f));  // closer or farther, never cropping
-    const Vec3 at = c + Vec3{r.range(-0.25f, 0.25f), 0.3f, r.range(-0.2f, 0.2f)};
-    m_roll_cam = {at + Vec3{std::sin(az) * std::cos(el), std::sin(el), std::cos(az) * std::cos(el)} * dist, at};
+    m_present_el = r.range(0.80f, 0.94f);   // the presented height breathes a little too
+    if (auto lg = log::get(log::Area::Shell))
+        lg->info("take: {:.2f} s, rest {:.2f}, glide {:.2f}", m_take.duration(), m_rest, m_glide);
 }
 
 // Everything's place at time t. The Present phase eases toward its targets
@@ -358,10 +346,15 @@ void DiceView::update_poses(double t, double dt) {
     const float k = 1.0f - float(std::exp(-dt * kEase));
     for (int i = 0; i < 5; ++i) m_lift[i] += ((m_held[i] ? 1.0f : 0.0f) - m_lift[i]) * k;
 
-    const double e = t - m_phase_t0;
-    if (m_phase == Phase::Drop && e >= m_drop)  { m_phase = Phase::Rolled; m_phase_t0 = t; }
-    if (m_phase == Phase::Rolled && e >= m_rest) { m_phase = Phase::Glide; m_phase_t0 = t; }
-    if (m_phase == Phase::Glide && e >= m_glide) { m_phase = Phase::Present; }
+    // Each check measures time in ITS OWN phase (s005 log: with one shared
+    // elapsed time, a take longer than the rest skipped the rest entirely).
+    const auto e_now = [&] { return t - m_phase_t0; };
+    const auto note = [](const char* what, double at) {
+        if (auto lg = log::get(log::Area::Shell)) lg->debug("dice view: {} at {:.3f}", what, at);
+    };
+    if (m_phase == Phase::Take && e_now() >= m_take.duration()) { m_phase = Phase::Rolled; m_phase_t0 = t; note("rest", t); }
+    if (m_phase == Phase::Rolled && e_now() >= m_rest) { m_phase = Phase::Glide; m_phase_t0 = t; note("glide", t); }
+    if (m_phase == Phase::Glide && e_now() >= m_glide) { m_phase = Phase::Present; m_settled_pending = true; note("presented", t); }
     const double pe = t - m_phase_t0;
 
     switch (m_phase) {
@@ -377,18 +370,12 @@ void DiceView::update_poses(double t, double dt) {
             }
             break;
         }
-        case Phase::Drop: {
-            m_cam = m_roll_cam;
-            for (int i = 0; i < 5; ++i) {
-                if (m_held[i]) { m_pose[i] = m_scatter[i]; continue; }
-                const float u = std::min(1.0f, float(pe) / m_fall[i]);   // each lands in its own time
-                // Falls in, with a small bounce at the end (s005: the real tumble).
-                const float fall = 1.0f - u * u;
-                const float bounce = u > 0.75f ? std::sin((u - 0.75f) / 0.25f * kPi) * 0.12f : 0.0f;
-                m_pose[i].pos = m_scatter[i].pos + Vec3{0, 2.4f * fall + bounce, 0};
-                m_pose[i].rot = gfx::slerp(Quat::axis_angle({1, 0.3f, 0.2f}, 2.2f * float(i + 1)) * m_scatter[i].rot,
-                                           m_scatter[i].rot, gfx::smoothstep01(u));
-            }
+        case Phase::Take: {
+            // The take, played back: the physics' dice, the planned camera.
+            const auto dice = m_take.dice_at(pe);
+            for (int i = 0; i < 5; ++i) m_pose[i] = {dice[i].pos, dice[i].rot};
+            const auto c = m_take.cam_at(pe);
+            m_cam = {c.eye, c.at};
             break;
         }
         case Phase::Rolled: {
@@ -412,9 +399,34 @@ void DiceView::update_poses(double t, double dt) {
             for (int i = 0; i < 5; ++i) {
                 Pose target = present_pose(i);
                 target.pos.z += kHeldFwd * m_lift[i];
-                const float lift = m_held[i] ? 0.0f : std::sin(u * kPi) * 0.55f;
+                // Each die arcs at its own height, so crossing paths pass over
+                // one another instead of through (s005 frames).
+                const float lift = m_held[i] ? 0.0f : std::sin(u * kPi) * (0.35f + 0.18f * float(i));
                 m_pose[i].pos = gfx::lerp(m_scatter[i].pos, target.pos, u) + Vec3{0, lift, 0};
                 m_pose[i].rot = gfx::slerp(m_scatter[i].rot, target.rot, u);
+            }
+            // Dice slide into line AROUND each other, not through (s005 frames
+            // showed paths crossing): any two at about the same height that come
+            // closer than a die's width are eased apart on the felt. Held dice
+            // stand firm. Fades out as they reach the row (spaced 1.32 anyway).
+            {
+                const float strength = 1.0f - gfx::smoothstep01((u - 0.75f) / 0.25f);
+                for (int pass = 0; pass < 6 && strength > 0; ++pass)
+                    for (int a = 0; a < 5; ++a)
+                        for (int b = a + 1; b < 5; ++b) {
+                            Vec3& pa = m_pose[a].pos;
+                            Vec3& pb = m_pose[b].pos;
+                            if (std::fabs(pa.y - pb.y) > 0.95f) continue;
+                            Vec3 d{pa.x - pb.x, 0, pa.z - pb.z};
+                            const float dl = gfx::length(d);
+                            if (dl >= 1.08f) continue;
+                            d = dl > 1e-4f ? d * (1.0f / dl) : Vec3{1, 0, 0};
+                            const float gap = (1.08f - dl) * strength;
+                            const float sa = m_held[a] ? 0.0f : m_held[b] ? 1.0f : 0.5f;
+                            const float sb = m_held[b] ? 0.0f : m_held[a] ? 1.0f : 0.5f;
+                            pa = pa + d * (gap * sa);
+                            pb = pb - d * (gap * sb);
+                        }
             }
             break;
         }
@@ -429,13 +441,23 @@ void DiceView::start_ticking() {
 }
 
 bool DiceView::tick(const Glib::RefPtr<Gdk::FrameClock>& clock) {
-    const double t = double(clock->get_frame_time()) / 1e6;
+    // YATZE_SPEED=n plays everything n times faster -- for testing only.
+    static const double speed = [] {
+        const char* e = std::getenv("YATZE_SPEED");
+        const double v = e ? std::atof(e) : 1.0;
+        return v > 0 ? v : 1.0;
+    }();
+    const double t = double(clock->get_frame_time()) / 1e6 * speed;
     const double dt = m_last < 0 ? 1.0 / 60 : std::min(0.1, t - m_last);
     m_last = t;
-    if (m_phase_t0 < 0) m_phase_t0 = t;   // a roll starts on the first frame after it arrives
+    if (m_phase_t0 < 0) {                 // a roll starts on the first frame after it arrives
+        m_phase_t0 = t;
+        if (auto lg = log::get(log::Area::Shell)) lg->debug("dice view: take starts at {:.3f}", t);
+    }
     m_now = t;
     update_poses(t, dt);
     queue_render();
+    if (m_settled_pending) { m_settled_pending = false; m_sig_settled.emit(); }
 
     // Keep ticking while anything moves (or glows).
     bool moving = m_phase != Phase::Present;

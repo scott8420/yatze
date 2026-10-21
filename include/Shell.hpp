@@ -8,6 +8,7 @@
 #include "model/Drawers.hpp"
 #include "model/Game.hpp"
 #include "model/Settings.hpp"
+#include "model/Stats.hpp"
 #include "widgets/Widgets.hpp"
 
 #include <gtkmm/applicationwindow.h>
@@ -84,7 +85,9 @@ private:
 
     // ── helpers ────────────────────────────────────────────────────────────
     std::string settings_file() const;           // category: helper: $XDG_CONFIG_HOME/yatze/settings.json
-    void apply_settings();                       // category: helper: the dice style into both dice views
+    void apply_settings();
+    std::string history_file() const;            // category: helper: $XDG_DATA_HOME/yatze/history.json
+    void check_game_over();                      // category: helper: record a finished game, once                       // category: helper: the dice style into both dice views
     std::string table_file() const;              // category: helper: $XDG_CONFIG_HOME/yatze/table.json
     bool human_turn() const;                     // category: helper: a person is to move (input allowed)
     void schedule_computer();                    // category: helper: queue the next computer step, paced
@@ -104,6 +107,9 @@ private:
     sigc::connection   m_progress_tick;          // repaints "Working out the odds… N%"
     std::uint64_t      m_game_serial = 0;        // part of the roll key: a new game's first roll always animates
     model::settings::Settings  m_settings;
+    model::stats::History      m_history;        // every finished game (s006)
+    bool                       m_recorded = false;   // this game is in the history
+    std::string                m_news;           // game over: who won, any new best
     Glib::RefPtr<Gio::SimpleAction> m_act_dice;
     std::vector<model::Player> m_seats;          // the table: who sits where, person or computer
     sigc::connection   m_cpu_tick;               // the pending computer step (one at a time)

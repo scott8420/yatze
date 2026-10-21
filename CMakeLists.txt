@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
-project(yatze VERSION 0.1.0 LANGUAGES C CXX)
+project(yatze VERSION 0.7.0 LANGUAGES C CXX)
+
+# ── Application identity (one place; as Sudoku) ─────────────────────────────
+# The freedesktop app ID, from the project's GitHub home. The code gets it (and
+# the version) as compile definitions; the resource FILE names follow it. The
+# one place it is still spelled by hand: resources/yatze.gresource.xml (glib-
+# compile-resources reads it literally) and the .desktop / metainfo contents.
+set(YATZE_APP_ID "io.github.scott8420.Yatze")
+string(REPLACE "." "/" YATZE_APP_PATH "/${YATZE_APP_ID}")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +33,7 @@ add_library(yatze_model STATIC
     src/model/Computer.cpp
     src/model/TableFile.cpp
     src/model/Settings.cpp
+    src/model/Stats.cpp
     src/model/Shortcuts.cpp
 )
 target_include_directories(yatze_model PUBLIC include)
@@ -35,9 +44,16 @@ set_source_files_properties(src/model/Strategy.cpp PROPERTIES COMPILE_OPTIONS "-
 find_package(Threads REQUIRED)
 target_link_libraries(yatze_model PUBLIC Threads::Threads)
 
+# ── yatze_gfx -- the dice table's geometry and the filmed take (physics +
+# planned camera). GTK-free and GL-free, so the selftest shoots takes
+# headless. Optimised in every build: a take is ~1500 physics steps.
+add_library(yatze_gfx STATIC src/gfx/Take.cpp)
+target_include_directories(yatze_gfx PUBLIC include)
+set_source_files_properties(src/gfx/Take.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+
 # ── Headless selftest ────────────────────────────────────────────────────────
 add_executable(yatze_selftest src/model/selftest.cpp)
-target_link_libraries(yatze_selftest PRIVATE yatze_model)
+target_link_libraries(yatze_selftest PRIVATE yatze_model yatze_gfx)
 
 # ── Resources (gresource): the symbolic logo, compiled into the binary ───────
 find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
@@ -81,6 +97,28 @@ add_executable(yatze
     src/Log.cpp
 )
 target_include_directories(yatze PRIVATE include ${GTKMM_INCLUDE_DIRS} ${EPOXY_INCLUDE_DIRS})
-target_link_libraries(yatze     PRIVATE ${GTKMM_LIBRARIES} ${EPOXY_LIBRARIES} yatze_model spdlog::spdlog)
+target_link_libraries(yatze     PRIVATE ${GTKMM_LIBRARIES} ${EPOXY_LIBRARIES} yatze_model yatze_gfx spdlog::spdlog)
 target_link_directories(yatze   PRIVATE ${GTKMM_LIBRARY_DIRS})
 target_compile_options(yatze    PRIVATE ${GTKMM_CFLAGS_OTHER})
+
+target_compile_definitions(yatze PRIVATE
+    YATZE_APP_ID="${YATZE_APP_ID}"
+    YATZE_APP_PATH="${YATZE_APP_PATH}"
+    YATZE_VERSION="${PROJECT_VERSION}")
+
+# ── Install (so it launches from the GNOME overview) ────────────────────────
+#   ./install.sh            (or: cmake --install build --prefix ~/.local)
+# The binary, the .desktop entry, the full-colour app icon (scalable), the
+# symbolic icon, and the AppStream metainfo -- into the XDG dirs GNOME already
+# searches. Running ./build/yatze uninstalled still works (the in-app logo is
+# in the gresource); install is only for the app grid.
+include(GNUInstallDirs)
+install(TARGETS yatze RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES resources/${YATZE_APP_ID}.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES resources/${YATZE_APP_ID}.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES resources/${YATZE_APP_ID}-symbolic.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/symbolic/apps)
+install(FILES resources/${YATZE_APP_ID}.metainfo.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)

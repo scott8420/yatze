@@ -98,9 +98,10 @@ std::string num(double v) {
 }
 }  // namespace
 
-void HintPanel::show(const model::GameState& g, const Engine& engine) {
+void HintPanel::show(const model::GameState& g, const Engine& engine, bool rolling) {
     namespace st = model::strategy;
     if (g.players.empty()) { m_advice.set_text(""); return; }
+    if (rolling) { m_advice.set_markup("<i>The dice are rolling\u2026</i>"); return; }
     if (!engine.ready()) {
         m_advice.set_markup("<i>Working out the odds\u2026 " +
                             std::to_string(int(std::lround(engine.progress() * 100))) + "%</i>\n"

@@ -1,5 +1,6 @@
 #pragma once
 #include "gfx/Math.hpp"
+#include "gfx/Take.hpp"
 #include "model/Rules.hpp"
 
 #include <gtkmm/glarea.h>
@@ -22,9 +23,10 @@
 //                amber under its dice. Click a die to hold it.
 // Nothing runs on a fixed clock: each die lands at its own moment, and the
 // pause and the glide vary per roll (s005 makes the whole roll real physics).
-// A roll cuts to ROLLED (s004: a short drop; s005 replaces it with the
-// recorded take -- physics + a planned camera), then the camera and the dice
-// glide into PRESENTED together.
+// A roll (s005) is a TAKE shot in full first (gfx/Take: the dice out of the
+// cup, physics run to rest and landing on the drawn faces, the camera planned
+// over it), played back; a beat on the fallen dice; then the camera and the
+// dice glide into PRESENTED together. busy() is true until then.
 //
 // Pips are drawn by the fragment shader from the same face table the selftest
 // checks (gfx/DieFaces.hpp) -- no textures, no asset files. The scene renders
@@ -47,10 +49,14 @@ public:
     // Pixels of the view's left edge covered by a drawer (0 = none): the
     // presented row re-centres in what is still visible.
     void set_left_inset(float px);
+    void set_right_inset(float px);                      // the same for a drawer over the right edge
     void set_red(bool red);                              // red dice / white pips, else ivory / black
 
     sigc::signal<void(int)>& signal_die() { return m_sig_die; }
     sigc::signal<void()>&    signal_failed() { return m_sig_failed; }
+    // A roll is still playing (the take, the beat, the glide): the game waits.
+    bool busy() const { return !m_failed && m_phase != Phase::Present; }
+    sigc::signal<void()>&    signal_settled() { return m_sig_settled; }   // presented: the game may go on
     bool failed() const { return m_failed; }
 
 protected:
@@ -83,7 +89,9 @@ private:
     std::uint64_t        m_roll_key = 0;
 
     // Animation.
-    enum class Phase { Present, Drop, Rolled, Glide } m_phase = Phase::Present;
+    enum class Phase { Present, Take, Rolled, Glide } m_phase = Phase::Present;
+    gfx::Take            m_take;                          // this roll, filmed (s005)
+    bool                 m_settled_pending = false;
     double               m_phase_t0 = 0, m_now = 0, m_last = -1;
     std::array<Pose, 5>  m_pose{}, m_from{}, m_scatter{};
     Cam                  m_cam{}, m_roll_cam{};
@@ -92,10 +100,11 @@ private:
     int                  m_hover = -1;
     bool                 m_red = true;
     float                m_aspect = 1.6f;                 // the view's shape, for fitting the row
-    float                m_inset_frac = 0.0f;             // share of the width under a drawer
-    // This roll's pace and the presented height (drawn per roll in plan_roll).
-    double               m_drop = 0.8, m_rest = 1.4, m_glide = 1.9;
-    std::array<float, 5> m_fall{0.8f, 0.8f, 0.8f, 0.8f, 0.8f};
+    float                m_inset_frac = 0.0f;             // share of the width under a drawer (left)
+    float                m_inset_right = 0.0f;            // ... and under one on the right
+    // This roll's pace and the presented height (drawn per roll in plan_roll;
+    // the take's own length is the physics').
+    double               m_rest = 1.2, m_glide = 1.9;
     float                m_present_el = 0.87f;            // ~50 deg above the felt
 
     // GL objects.
@@ -108,6 +117,7 @@ private:
 
     sigc::signal<void(int)> m_sig_die;
     sigc::signal<void()>    m_sig_failed;
+    sigc::signal<void()>    m_sig_settled;
 };
 
 }  // namespace yatze

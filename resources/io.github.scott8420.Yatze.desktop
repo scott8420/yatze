@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Yatzé!
+GenericName=Dice Game
+Comment=Roll five dice, fill thirteen boxes -- against friends or the computer
+Exec=yatze
+Icon=io.github.scott8420.Yatze
+Terminal=false
+Categories=Game;BoardGame;GTK;
+Keywords=yahtzee;yatzy;dice;poker dice;kniffel;game;
+StartupNotify=true
+StartupWMClass=io.github.scott8420.Yatze

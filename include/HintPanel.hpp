@@ -14,7 +14,7 @@ class HintPanel : public widgets::Box {
 public:
     HintPanel();
     // Re-read the advice for this position (cheap: one turn, solved exactly).
-    void show(const model::GameState& g, const Engine& engine);
+    void show(const model::GameState& g, const Engine& engine, bool rolling = false);
 
 private:
     widgets::Label m_advice;

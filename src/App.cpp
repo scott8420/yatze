@@ -27,7 +27,7 @@ Glib::RefPtr<App> App::create() {
     return Glib::make_refptr_for_instance(new App());
 }
 
-App::App() : Gtk::Application("io.github.scott8420.Yatze") {}
+App::App() : Gtk::Application(YATZE_APP_ID) {}   // from CMake: one place
 
 // The SHORTCUT-REGISTRY paradigm's other consumer. Accelerators are an
 // application-scope concern (they survive window construction order), so they
@@ -75,7 +75,7 @@ void App::on_activate() {
     g_resources_register(yatze_resources_get_resource());
     if (auto display = Gdk::Display::get_default()) {
         auto icons = Gtk::IconTheme::get_for_display(display);
-        icons->add_resource_path("/io/github/scott8420/Yatze/icons");
+        icons->add_resource_path(YATZE_APP_PATH "/icons");
     }
 
     m_shell = new Shell();       // lifetime owned by the application

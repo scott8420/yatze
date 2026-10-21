@@ -29,6 +29,8 @@ void Shell::bind_actions() {  // bindings
     // The widgets ask; the handlers act through the verbs.
     m_dice.signal_die().connect(sigc::mem_fun(*this, &Shell::on_hold));
     m_dice3d.signal_die().connect(sigc::mem_fun(*this, &Shell::on_hold));
+    // The roll has played out: reveal the card's options, let play go on.
+    m_dice3d.signal_settled().connect([this] { queue_repaint(); refresh_hints(); });
     m_card.signal_pick().connect(sigc::mem_fun(*this, &Shell::on_score));
 
     // Model <-> journal <-> UI. The store asks the journal whether the door is

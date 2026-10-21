@@ -16,7 +16,9 @@ public:
     Scorecard();
     // interactive = a person is to move; on a computer's turn its options show
     // but cannot be clicked.
-    void set(const model::GameState& g, bool interactive = true);
+    // reveal = false while a roll is still playing: the open boxes stay blank
+    // so the card does not tell you the dice before they land.
+    void set(const model::GameState& g, bool interactive = true, bool reveal = true);
     // The hint's box (-1 none): outlined amber. Kept across set() calls.
     void set_suggested(int box);
     sigc::signal<void(model::Category)>& signal_pick() { return m_sig_pick; }

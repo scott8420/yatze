@@ -36,10 +36,10 @@ void Scorecard::clear() {
     while (auto* c = get_first_child()) remove(*c);
 }
 
-void Scorecard::set(const model::GameState& g, bool interactive) {
+void Scorecard::set(const model::GameState& g, bool interactive, bool reveal) {
     clear();
     const int n = int(g.players.size());
-    const bool live = !g.over() && g.rolls_used > 0;
+    const bool live = !g.over() && g.rolls_used > 0 && reveal;
     const model::Scoring opt =
         n ? model::score_options(g.player().card, g.dice) : model::Scoring{};
 

@@ -3,6 +3,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <array>
+#include <cstdlib>
 #include <string>
 
 namespace yatze::log {
@@ -33,7 +34,9 @@ void init() {
     for (int i = 0; i < kAreaCount; ++i) {
         const auto area = static_cast<Area>(i);
         auto lg = std::make_shared<spdlog::logger>(area_name(area), sink);
-        lg->set_level(spdlog::level::info);   // default INFO; raise one area to TRACE to debug
+        // Default INFO. YATZE_DEBUG=1 raises every area to DEBUG (the phase
+        // changes of a roll, etc.) -- the "drop to log mode" switch.
+        lg->set_level(std::getenv("YATZE_DEBUG") ? spdlog::level::debug : spdlog::level::info);
         a[static_cast<std::size_t>(i)] = lg;
     }
 }

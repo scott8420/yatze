@@ -29,6 +29,8 @@ void Shell::start_game(std::vector<model::Player> seats) {  // handler
     model::table_file::save(table_file(), m_seats);   // remembered for next launch
     m_cpu_tick.disconnect();              // a computer step from the old game must not land
     ++m_game_serial;
+    m_recorded = false;
+    m_news.clear();
     model::verbs::new_game(m_store, m_journal, std::move(seats));
     m_said.set_text("");
     if (auto lg = log::get(log::Area::Game)) lg->info("new game: {} seat(s)", m_seats.size());
@@ -37,7 +39,7 @@ void Shell::start_game(std::vector<model::Player> seats) {  // handler
 // Input from the person at the table is only taken on a person's turn: the
 // keys and clicks would otherwise move the computer's dice.
 void Shell::on_roll() {  // handler: R / button
-    if (!human_turn()) return;
+    if (!human_turn() || m_dice3d.busy()) return;
     if (model::verbs::roll(m_store, m_journal)) {
         m_said.set_text("");
         if (auto lg = log::get(log::Area::Game))
@@ -48,12 +50,12 @@ void Shell::on_roll() {  // handler: R / button
 }
 
 void Shell::on_hold(int die) {  // handler: 1-5 / click a die
-    if (!human_turn()) return;
+    if (!human_turn() || m_dice3d.busy()) return;
     model::verbs::toggle_hold(m_store, m_journal, die);
 }
 
 void Shell::on_score(model::Category c) {  // handler: click a box
-    if (!human_turn()) return;
+    if (!human_turn() || m_dice3d.busy()) return;
     if (model::verbs::score(m_store, m_journal, c)) {
         m_said.set_text(m_journal.undo_label());
         if (auto lg = log::get(log::Area::Game)) lg->info("{}", m_journal.undo_label());
