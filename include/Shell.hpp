@@ -5,6 +5,7 @@
 #include "HintPanel.hpp"
 #include "Scorecard.hpp"
 #include "StatsPanel.hpp"
+#include "ViewOrb.hpp"
 #include "model/Drawers.hpp"
 #include "model/Game.hpp"
 #include "model/Settings.hpp"
@@ -82,6 +83,7 @@ private:
     void on_about();                             // category: handler
     void on_shortcuts();                         // category: handler
     void on_dice_style(const Glib::ustring& k);  // category: handler: menu › Red / Ivory dice
+    void on_clear_history();                     // category: handler: menu › Clear high scores… (confirm)
 
     // ── helpers ────────────────────────────────────────────────────────────
     std::string settings_file() const;           // category: helper: $XDG_CONFIG_HOME/yatze/settings.json
@@ -125,6 +127,9 @@ private:
     widgets::Label      m_status;
     widgets::Stack      m_dice_stack;            // "3d" (DiceView) or "flat" (DiceRow, if GL fails)
     DiceView            m_dice3d;
+    widgets::Overlay    m_table;                 // the 3D view + the orb over its corner (s008)
+    ViewOrb             m_orb{m_dice3d};
+    widgets::Button     m_reset_view;            // back to the standard view (Home)
     DiceRow             m_dice;
     widgets::Button     m_roll;
     widgets::Label      m_said;                  // "Undid: Roll 2"

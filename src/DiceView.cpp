@@ -259,6 +259,30 @@ void DiceView::set(const model::Dice& dice, const std::array<bool, 5>& held, boo
     queue_render();
 }
 
+// ── your own view ───────────────────────────────────────────────────────────
+void DiceView::orbit_by(float dx_px, float dy_px) {
+    if (!m_user_view) {
+        m_orbit = {0.0f, m_present_el};   // start from where the standard view is
+        m_user_view = true;
+        m_sig_view.emit();
+    }
+    m_orbit = gfx::drag(m_orbit, dx_px, dy_px);
+    start_ticking();
+}
+
+void DiceView::snap_to(int axis) {
+    if (!m_user_view) { m_orbit = {0.0f, m_present_el}; m_user_view = true; m_sig_view.emit(); }
+    m_orbit = gfx::snap(axis, m_orbit);
+    start_ticking();
+}
+
+void DiceView::reset_view() {
+    if (!m_user_view) return;
+    m_user_view = false;
+    m_sig_view.emit();
+    start_ticking();
+}
+
 void DiceView::set_red(bool red) {
     if (red == m_red) return;
     m_red = red;
@@ -307,10 +331,12 @@ DiceView::Cam DiceView::present_cam() const {
     const float th = std::tan(kFov / 2);
     const float aspect = std::max(0.5f, m_aspect * (1.0f - cover - cover_r));
     const float dist = std::max(half / (th * aspect), 1.6f / th);
-    const float el = m_present_el;                                      // ~46-54 deg: reading the tops
+    // The standard view, or yours (the orb).
+    const gfx::Orbit o = m_user_view ? m_orbit : gfx::Orbit{0.0f, m_present_el};
     const float shift = (cover - cover_r) * th * m_aspect * dist;      // world units at the row
-    const Vec3 at{-shift, 0.5f, kRowZ + 0.15f};
-    return {at + Vec3{0, std::sin(el), std::cos(el)} * dist, at};
+    const Vec3 right{std::cos(o.az), 0, -std::sin(o.az)};               // the camera's own right
+    const Vec3 at = Vec3{0, 0.5f, kRowZ + 0.15f} - right * shift;
+    return {at + gfx::orbit_dir(o) * dist, at};
 }
 
 // Shoot this roll's take (gfx/Take: the physics run to rest, landing on the
@@ -359,9 +385,16 @@ void DiceView::update_poses(double t, double dt) {
 
     switch (m_phase) {
         case Phase::Present: {
+            // The camera eases on an ARC (direction, then distance), so an
+            // orbit or a snap swings around the dice rather than cutting
+            // through them; a little quicker than the dice, so a drag feels direct.
             const Cam pc = present_cam();
-            m_cam.eye = gfx::lerp(m_cam.eye, pc.eye, k);
-            m_cam.at  = gfx::lerp(m_cam.at, pc.at, k);
+            const float kc = 1.0f - float(std::exp(-dt * 12.0));
+            const Vec3 o1 = m_cam.eye - m_cam.at, o2 = pc.eye - pc.at;
+            m_cam.at = gfx::lerp(m_cam.at, pc.at, kc);
+            const Quat turn = gfx::slerp(Quat{}, gfx::from_to(gfx::normalize(o1), gfx::normalize(o2)), kc);
+            const float len = gfx::length(o1) + (gfx::length(o2) - gfx::length(o1)) * kc;
+            m_cam.eye = m_cam.at + gfx::normalize(turn.rotate(o1)) * len;
             for (int i = 0; i < 5; ++i) {
                 Pose target = present_pose(i);
                 target.pos.z += kHeldFwd * m_lift[i];
@@ -458,6 +491,7 @@ bool DiceView::tick(const Glib::RefPtr<Gdk::FrameClock>& clock) {
     update_poses(t, dt);
     queue_render();
     if (m_settled_pending) { m_settled_pending = false; m_sig_settled.emit(); }
+    m_sig_frame.emit();
 
     // Keep ticking while anything moves (or glows).
     bool moving = m_phase != Phase::Present;

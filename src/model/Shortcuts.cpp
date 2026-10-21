@@ -139,6 +139,11 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // ── Mouse ─────────────────────────────────────────────────────────────
         {"Mouse", "", {}, "Click a die", "Hold / release it"},
         {"Mouse", "", {}, "Click a score", "Take that box (it shows what it would score)"},
+        {"Mouse", "", {}, "Drag the orb", "Turn the table: look from any side or from above"},
+        {"Mouse", "", {}, "Click an orb axis", "Look along that axis (X side, Y above, Z front)"},
+
+        // ── View ──────────────────────────────────────────────────────────────
+        {"View", "win.reset-view", {"Home"}, "", "Back to the standard view"},
     };
     return kReg;
 }

@@ -40,7 +40,22 @@ void Shell::build_shell() {  // zone: header + play area + scorecard
     m_status.set_justify(Gtk::Justification::CENTER);
     m_play.append(m_status);
     // The dice: the 3D table, or the flat row if OpenGL cannot start.
-    m_dice_stack.add(m_dice3d, "3d");
+    // The orb and the reset button float over the table's top-right corner.
+    m_table.set_child(m_dice3d);
+    auto orb_box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 4);
+    orb_box->set_halign(Gtk::Align::END);
+    orb_box->set_valign(Gtk::Align::START);
+    orb_box->set_margin(8);
+    orb_box->append(m_orb);
+    m_reset_view.set_icon_name("view-refresh-symbolic");
+    m_reset_view.set_tooltip_text("Standard view (Home)");
+    m_reset_view.add_css_class("osd");
+    m_reset_view.add_css_class("circular");
+    m_reset_view.set_halign(Gtk::Align::CENTER);
+    m_reset_view.set_action_name("win.reset-view");
+    orb_box->append(m_reset_view);
+    m_table.add_overlay(*orb_box);
+    m_dice_stack.add(m_table, "3d");
     m_dice_stack.add(m_dice, "flat");
     m_dice_stack.set_visible_child("3d");
     m_dice_stack.set_vexpand(true);
@@ -129,6 +144,7 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     auto game = Gio::Menu::create();
     game->append("New game", "win.new-game");
     game->append("New game\u2026", "win.new-game-dialog");   // who plays
+    game->append("Clear high scores\u2026", "win.clear-history");
     menu->append_section(game);
 
     m_edit_menu = Gio::Menu::create();   // re-labelled live by update_undo_ui
@@ -144,6 +160,7 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     auto view = Gio::Menu::create();
     view->append("Rules and hints", "win.toggle-left-drawer");
     view->append("Standings", "win.toggle-right-drawer");
+    view->append("Standard view", "win.reset-view");
     menu->append_section(view);
 
     auto app = Gio::Menu::create();

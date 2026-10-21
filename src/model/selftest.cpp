@@ -8,6 +8,7 @@
 
 #include "gfx/DieFaces.hpp"
 #include "gfx/Mesh.hpp"
+#include "gfx/Orbit.hpp"
 #include "gfx/Take.hpp"
 #include "model/Computer.hpp"
 #include "model/Drawers.hpp"
@@ -559,6 +560,8 @@ int main() {
         sx::History big;
         for (std::size_t i = 0; i < sx::History::kMax + 5; ++i) big.add(solo);
         check("stats: history is capped", big.games().size() == sx::History::kMax);
+        big.clear();
+        check("stats: clear forgets every game", big.games().empty() && big.top().empty() && big.players().empty());
         std::filesystem::remove_all(std::filesystem::path(file).parent_path());
     }
 
@@ -662,6 +665,34 @@ int main() {
         a.seed = 100;
         check("take: another seed, another take", gfx::shoot(a).frames.size() != t1.frames.size() ||
               gfx::length(gfx::shoot(a).frames[30][0].pos - t1.frames[30][0].pos) > 0.01f);
+    }
+
+    std::cout << "[3d: the orb]\n";
+    {
+        namespace gfx = yatze::gfx;
+        const gfx::Vec3 at{0, 0.5f, 1.2f};
+        auto eye_of = [&](const gfx::Orbit& o) { return at + gfx::orbit_dir(o) * 10.0f; };
+        const gfx::Orbit front{0.0f, 0.3f};
+        const auto x = gfx::project_axis({1, 0, 0}, eye_of(front), at);
+        const auto y = gfx::project_axis({0, 1, 0}, eye_of(front), at);
+        const auto z = gfx::project_axis({0, 0, 1}, eye_of(front), at);
+        check("orb: from your side, X points right", x.x > 0.99f && std::fabs(x.y) < 1e-3f);
+        check("orb: Y points up", y.y > 0.9f);
+        check("orb: Z points at you (in front of the orb)", z.depth < -0.9f);
+        bool snaps = true;
+        for (int i : {0, 1, 2, 4, 5}) {
+            const auto o = gfx::snap(i, front);
+            const auto p = gfx::project_axis(gfx::axis_vec(i), eye_of(o), at);
+            if (p.depth > -0.95f) snaps = false;   // the clicked axis points straight at you
+        }
+        check("orb: clicking an axis looks along it", snaps);
+        check("orb: -Y (from under the felt) gives the top view", gfx::snap(3, front).el == gfx::kOrbitElMax);
+        const auto low = gfx::drag(front, 0, -1000), high = gfx::drag(front, 0, 1000);
+        check("orb: never below the felt, never past straight down",
+              low.el == gfx::kOrbitElMin && high.el == gfx::kOrbitElMax);
+        auto spun = front;
+        for (int k = 0; k < 50; ++k) spun = gfx::drag(spun, 37, 0);
+        check("orb: all the way round, azimuth stays wrapped", spun.az > -3.1416f && spun.az <= 3.1416f);
     }
 
     std::cout << "[drawers]\n";

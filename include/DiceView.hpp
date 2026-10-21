@@ -1,5 +1,6 @@
 #pragma once
 #include "gfx/Math.hpp"
+#include "gfx/Orbit.hpp"
 #include "gfx/Take.hpp"
 #include "model/Rules.hpp"
 
@@ -51,6 +52,20 @@ public:
     void set_left_inset(float px);
     void set_right_inset(float px);                      // the same for a drawer over the right edge
     void set_red(bool red);                              // red dice / white pips, else ivory / black
+
+    // ── your own view (s008): the orb drives these ──────────────────────────
+    // Orbit the presented camera by a drag (pixels), look along an axis
+    // (gfx::snap: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z), or back to standard.
+    // Your view lasts across rolls (each roll's take keeps its own camera,
+    // then settles into your view) until reset.
+    void orbit_by(float dx_px, float dy_px);
+    void snap_to(int axis);
+    void reset_view();
+    bool user_view() const { return m_user_view; }
+    gfx::Vec3 cam_eye() const { return m_cam.eye; }
+    gfx::Vec3 cam_at() const { return m_cam.at; }
+    sigc::signal<void()>& signal_frame() { return m_sig_frame; }       // after each animation step
+    sigc::signal<void()>& signal_view_changed() { return m_sig_view; } // standard <-> your view
 
     sigc::signal<void(int)>& signal_die() { return m_sig_die; }
     sigc::signal<void()>&    signal_failed() { return m_sig_failed; }
@@ -106,6 +121,8 @@ private:
     // the take's own length is the physics').
     double               m_rest = 1.2, m_glide = 1.9;
     float                m_present_el = 0.87f;            // ~50 deg above the felt
+    bool                 m_user_view = false;             // the orb has been used (s008)
+    gfx::Orbit           m_orbit{};                       // ... and where it put you
 
     // GL objects.
     bool         m_failed = false;
@@ -118,6 +135,8 @@ private:
     sigc::signal<void(int)> m_sig_die;
     sigc::signal<void()>    m_sig_failed;
     sigc::signal<void()>    m_sig_settled;
+    sigc::signal<void()>    m_sig_frame;
+    sigc::signal<void()>    m_sig_view;
 };
 
 }  // namespace yatze

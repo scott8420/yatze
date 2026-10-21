@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yatze VERSION 0.7.0 LANGUAGES C CXX)
+project(yatze VERSION 0.8.0 LANGUAGES C CXX)
 
 # ── Application identity (one place; as Sudoku) ─────────────────────────────
 # The freedesktop app ID, from the project's GitHub home. The code gets it (and
@@ -86,6 +86,7 @@ add_executable(yatze
     src/Shell_helpers.cpp
     src/DiceRow.cpp
     src/DiceView.cpp
+    src/ViewOrb.cpp
     src/Scorecard.cpp
     src/HintPanel.cpp
     src/NewGameDialog.cpp

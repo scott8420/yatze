@@ -6,6 +6,8 @@
 #include "ShortcutsDialog.hpp"
 #include "Log.hpp"
 
+#include <gtkmm/alertdialog.h>
+
 // Shell_handlers.cpp -- HANDLERS. Each game handler is ONE call into
 // model::verbs, which goes through the journal; the repaint follows from the
 // store's change signal. A handler never writes the game itself.
@@ -105,6 +107,25 @@ void Shell::on_dice_style(const Glib::ustring& k) {  // handler: menu › Red / 
     m_settings.dice = d;
     model::settings::save(settings_file(), m_settings);
     apply_settings();
+}
+
+// Clear every remembered game -- after a plain question; Cancel is the default.
+void Shell::on_clear_history() {  // handler
+    auto ask = Gtk::AlertDialog::create("Clear all high scores and player records?");
+    ask->set_detail("Every finished game is forgotten. This cannot be undone.");
+    ask->set_buttons({"Cancel", "Clear"});
+    ask->set_cancel_button(0);
+    ask->set_default_button(0);
+    ask->choose(*this, [this, ask](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        int choice = 0;
+        try { choice = ask->choose_finish(result); } catch (...) { return; }
+        if (choice != 1) return;
+        m_history.clear();
+        m_history.save(history_file());
+        m_news.clear();
+        if (auto lg = log::get(log::Area::Game)) lg->info("history cleared");
+        if (m_drawers.is_open(model::Drawers::Side::Right)) m_stats.show(m_store.state(), m_history, m_news);
+    });
 }
 
 // ── hide-on-close singletons (Cairn's dialog-lifetime stone) ────────────────

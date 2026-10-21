@@ -24,6 +24,10 @@ void Shell::bind_actions() {  // bindings
     add_action("about",     sigc::mem_fun(*this, &Shell::on_about));
     add_action("shortcuts", sigc::mem_fun(*this, &Shell::on_shortcuts));
     add_action("quit",      [this] { close(); });
+    auto reset = add_action("reset-view", [this] { m_dice3d.reset_view(); });
+    reset->set_enabled(false);
+    m_dice3d.signal_view_changed().connect([this, reset] { reset->set_enabled(m_dice3d.user_view()); });
+    add_action("clear-history", sigc::mem_fun(*this, &Shell::on_clear_history));
     m_act_dice = add_action_radio_string("dice-style", sigc::mem_fun(*this, &Shell::on_dice_style), "red");
 
     // The widgets ask; the handlers act through the verbs.

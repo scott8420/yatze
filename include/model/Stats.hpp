@@ -52,6 +52,7 @@ public:
     static constexpr std::size_t kMax = 2000;   // oldest dropped beyond this
 
     void add(GameRecord g);
+    void clear() { m_games.clear(); }
     const std::vector<GameRecord>& games() const { return m_games; }
 
     std::vector<PlayerStats> players() const;          // most games first

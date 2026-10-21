@@ -18,6 +18,8 @@ Shell::Shell()
       m_play("play", Gtk::Orientation::VERTICAL, 18),
       m_status("play.status"),
       m_dice_stack("play.dice_stack"),
+      m_table("play.table"),
+      m_reset_view("play.reset_view"),
       m_roll("play.roll"),
       m_said("play.said"),
       m_overlay("drawers.overlay"),
