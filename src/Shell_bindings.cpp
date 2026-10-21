@@ -1,6 +1,7 @@
 #include "Shell.hpp"
 #include "Log.hpp"
 
+#include <glibmm/main.h>
 #include <glibmm/variant.h>
 #include <gtkmm/eventcontrollerkey.h>
 
@@ -37,6 +38,15 @@ void Shell::bind_actions() {  // bindings
     m_store.set_door([this] { return m_journal.open(); });
     m_store.set_on_change([this] { queue_repaint(); });
     m_journal.set_on_change([this] { update_undo_ui(); });
+    m_engine.signal_ready().connect([this] {
+        m_progress_tick.disconnect();
+        refresh_hints();
+    });
+    // While the table builds, the open hints drawer shows the progress.
+    m_progress_tick = Glib::signal_timeout().connect([this] {
+        refresh_hints();
+        return !m_engine.ready();
+    }, 250);
 
     // ── Keys the WINDOW hears (bubble phase: only what nothing else took) ────
     // Ctrl+Z is not an accelerator, so a text box (none yet; the New Game

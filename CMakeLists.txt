@@ -20,9 +20,15 @@ find_package(spdlog REQUIRED)
 add_library(yatze_model STATIC
     src/model/Rules.cpp
     src/model/Game.cpp
+    src/model/Strategy.cpp
     src/model/Shortcuts.cpp
 )
 target_include_directories(yatze_model PUBLIC include)
+# The strategy engine is optimised in EVERY build type: its table (~1M states)
+# takes seconds at -O2 and minutes at -O0, and Debug is the default here.
+set_source_files_properties(src/model/Strategy.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+find_package(Threads REQUIRED)
+target_link_libraries(yatze_model PUBLIC Threads::Threads)
 
 # ── Headless selftest ────────────────────────────────────────────────────────
 add_executable(yatze_selftest src/model/selftest.cpp)
@@ -60,6 +66,7 @@ add_executable(yatze
     src/DiceRow.cpp
     src/Scorecard.cpp
     src/HintPanel.cpp
+    src/Engine.cpp
     src/StatsPanel.cpp
     src/AboutWindow.cpp
     src/ShortcutsDialog.cpp

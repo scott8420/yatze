@@ -26,13 +26,14 @@ Shell::Shell()
     set_name("shell.window");
 }
 
-Shell::~Shell() = default;
+Shell::~Shell() { m_progress_tick.disconnect(); }   // no tick into a dead window
 
 // Construct, bind, deal the first game, paint.
 void Shell::build_ui() {
     build_shell();     // zone (calls build_drawers)
     bind_actions();    // bindings
     on_new_game(m_table);
+    m_engine.start();  // cache, or a background build (Engine.hpp)
     if (auto lg = log::get(log::Area::Shell)) lg->info("ready");
 }
 

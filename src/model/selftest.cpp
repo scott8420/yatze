@@ -10,6 +10,12 @@
 #include "model/Game.hpp"
 #include "model/Rules.hpp"
 #include "model/Shortcuts.hpp"
+#include "model/Strategy.hpp"
+
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
 
 #include <algorithm>
 #include <iostream>
@@ -203,13 +209,11 @@ int main() {
         check("no stray writes in a whole game", f.s.strays() == 0);
     }
 
-    std::cout << "[undo: the one door + the fate]\n";
+    std::cout << "[undo: the one door; a roll is final]\n";
     {
         using namespace model::verbs;
         struct Verb { std::string name; std::function<bool(Fix&)> prep, act; };
         const std::vector<Verb> table = {
-            {"roll",        [](Fix&) { return true; },
-                            [](Fix& f) { return roll(f.s, f.j); }},
             {"toggle_hold", [](Fix& f) { return roll(f.s, f.j); },
                             [](Fix& f) { return toggle_hold(f.s, f.j, 2); }},
             {"score",       [](Fix& f) { return roll(f.s, f.j); },
@@ -238,27 +242,28 @@ int main() {
             check("gate: a write around the door is a stray", f.s.strays() == 1);
         }
         {
+            // Scott, s002: no undo for rolls. A roll goes through the door (no
+            // stray) and then ends undo: nothing before it can come back.
             Fix f;
             roll(f.s, f.j);
-            const Dice first = f.g().dice;
-            f.j.undo();
-            roll(f.s, f.j);
-            check("fate: undo the roll, roll again -> the same dice", f.g().dice == first, str(first) + " vs " + str(f.g().dice));
+            check("roll: through the one door", f.s.strays() == 0);
+            check("roll: is final -- nothing to undo after it", !f.j.can_undo() && !f.j.can_redo());
             toggle_hold(f.s, f.j, 0);
+            check("roll: a hold after it is undoable", f.j.can_undo());
             roll(f.s, f.j);
-            const Dice second = f.g().dice;
-            f.j.undo();            // the roll
-            f.j.undo();            // the hold
-            roll(f.s, f.j);        // nothing held this time
-            check("fate: each slot keeps its face whatever is held",
-                  f.g().dice[1] == second[1] && f.g().dice[4] == second[4]);
+            check("roll: the next roll takes the hold out of reach", !f.j.can_undo());
+            const auto before = f.g();
+            for (int i = 0; i < model::kCategories; ++i)
+                if (score(f.s, f.j, model::category(i))) break;
+            f.j.undo();
+            check("roll: the box taken after the last roll is undoable", f.g() == before);
+            f.j.redo();
+            roll(f.s, f.j);
+            check("roll: the next player's roll ends that too", !f.j.can_undo());
         }
         {
             Fix f;
             roll(f.s, f.j);
-            check("label: Roll", f.j.undo_label() == "Roll");
-            roll(f.s, f.j);
-            check("label: Roll 2", f.j.undo_label() == "Roll 2", f.j.undo_label());
             toggle_hold(f.s, f.j, 4);
             check("label: Hold die 5", f.j.undo_label() == "Hold die 5", f.j.undo_label());
             Fix g;
@@ -282,6 +287,111 @@ int main() {
             f.j.undo();
             check("game joker: undo takes the bonus back too", f.g().players[0].card.bonuses == 0);
         }
+    }
+
+    std::cout << "[strategy: the table]\n";
+    namespace st = model::strategy;
+    st::Table table;
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool built = table.build();
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%.4f in %.1f s", table.start(), secs);
+        check("table: built", built && table.ready(), buf);
+        // The optimal solitaire game under these rules. Published (Verhoeff,
+        // OSYP): 254.59; ours 254.5877 -- see ARCHITECTURE, "the anchor".
+        check("table: optimal expected game is 254.59 (+-0.01)", std::fabs(table.start() - 254.59) < 0.01, buf);
+        check("table: pinned at 254.5877", std::fabs(table.start() - 254.5877) < 0.0005, buf);
+        st::State last;
+        last.mask = std::uint16_t(((1u << model::kCategories) - 1) & ~(1u << model::index(Category::Chance)));
+        // Only Chance left: re-roll the low dice twice. Exactly 23.3333 (70/3 by
+        // hand: one die kept at >=5 on the first reroll, >=4 on the second).
+        check("table: only Chance left is worth 23.33 (re-rolling the low dice)",
+              std::fabs(table.future(last) - 70.0 / 3.0) < 1e-3, std::to_string(table.future(last)));
+        const auto file = std::filesystem::temp_directory_path() / "yatze_selftest_ev.bin";
+        st::Table back;
+        check("table: save + load round-trips", table.save(file.string()) && back.load(file.string()) &&
+              back.start() == table.start() && back.future(last) == table.future(last));
+        std::filesystem::remove(file);
+        st::Table none;
+        check("table: a missing file does not load", !none.load("/nonexistent/yatze.bin") && !none.ready());
+    }
+
+    std::cout << "[strategy: the rules agree]\n";
+    {
+        // The state version of the rules (the table's) against the game's own
+        // score_options, on cards from random play -- every roll of five dice.
+        int cards = 0, bad = 0;
+        std::uint64_t seed = 12345;
+        for (int game = 0; game < 30; ++game) {
+            Fix f(1, 1000 + game);
+            for (int turn = 0; turn < model::kRounds; ++turn) {
+                const auto& card = f.g().players[0].card;
+                const st::State s = st::state_of(card);
+                ++cards;
+                for (int a = 1; a <= 6; ++a) for (int b = a; b <= 6; ++b) for (int c = b; c <= 6; ++c)
+                for (int d = c; d <= 6; ++d) for (int e = d; e <= 6; ++e) {
+                    const Dice dice{a, b, c, d, e};
+                    const auto opt = model::score_options(card, dice);
+                    const auto mv  = st::moves(s, dice);
+                    int legal = 0;
+                    for (int i = 0; i < model::kCategories; ++i) legal += opt.allowed[i];
+                    if (int(mv.size()) != legal) { ++bad; continue; }
+                    for (const auto& m : mv) {
+                        const int i = model::index(m.c);
+                        const int bonus = opt.bonus ? model::kYatzeBonus : 0;
+                        model::Card after = card;
+                        after.box[i] = m.points;
+                        if (!opt.allowed[i] || opt.points[i] != m.points ||
+                            m.gain != after.total() - card.total() + bonus) ++bad;
+                    }
+                }
+                // Advance with a random legal box (and random dice).
+                model::verbs::roll(f.s, f.j);
+                std::vector<int> open;
+                for (int i = 0; i < model::kCategories; ++i)
+                    if (model::verbs::can_score(f.g(), model::category(i))) open.push_back(i);
+                seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+                model::verbs::score(f.s, f.j, model::category(open[(seed >> 33) % open.size()]));
+            }
+        }
+        check("moves() == score_options on every roll of " + std::to_string(cards) + " random cards",
+              bad == 0, std::to_string(bad) + " disagreements");
+    }
+
+    std::cout << "[strategy: advice]\n";
+    {
+        model::Card empty;
+        // Consistency: playing advise()'s best over every first roll IS the table.
+        double sum = 0;
+        for (int i = 0; i < 7776; ++i) {
+            const Dice d{i % 6 + 1, i / 6 % 6 + 1, i / 36 % 6 + 1, i / 216 % 6 + 1, i / 1296 % 6 + 1};
+            const auto a = st::advise(table, empty, d, 2);
+            double best = a.boxes.front().expect;
+            if (!a.holds.empty()) best = std::max(best, a.holds.front().expect);
+            sum += best;
+        }
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%.4f vs %.4f", sum / 7776.0, table.start());
+        check("advise: the best play over all 7776 first rolls averages the table", std::fabs(sum / 7776.0 - table.start()) < 0.01, buf);
+
+        auto a = st::advise(table, empty, {5, 5, 5, 5, 5}, 2);
+        check("advise: five 5s on an empty card -> take the Yatze", !a.roll_on && a.boxes.front().c == Category::Yatze);
+        a = st::advise(table, empty, {1, 2, 3, 4, 5}, 2);
+        check("advise: a large straight on an empty card -> take it", !a.roll_on && a.boxes.front().c == Category::LargeStraight);
+        a = st::advise(table, empty, {6, 6, 6, 2, 1}, 2);
+        check("advise: three 6s, two rolls left -> roll on, keeping the 6s",
+              a.roll_on && a.holds.front().count == 3 && a.holds.front().kept[0] == 6 &&
+              a.holds.front().hold[0] && a.holds.front().hold[1] && a.holds.front().hold[2] && !a.holds.front().hold[3]);
+        a = st::advise(table, empty, {6, 6, 6, 2, 1}, 0);
+        check("advise: no rolls left -> boxes only", a.holds.empty() && !a.roll_on && !a.boxes.empty());
+        check("advise: boxes ranked best first", std::is_sorted(a.boxes.begin(), a.boxes.end(),
+              [](const st::BoxAdvice& x, const st::BoxAdvice& y) { return x.expect > y.expect; }));
+        a = st::advise(table, empty, {6, 6, 6, 2, 1}, 1);
+        check("advise: holds are distinct keeps (not all five)", !a.holds.empty() &&
+              std::all_of(a.holds.begin(), a.holds.end(), [](const st::HoldAdvice& h) { return h.count < 5; }));
+        check("advise: no table -> no advice", st::advise(st::Table{}, empty, {1, 2, 3, 4, 5}, 2).boxes.empty());
     }
 
     std::cout << "[drawers]\n";

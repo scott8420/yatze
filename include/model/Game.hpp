@@ -6,14 +6,12 @@
 // one record, the whole GameState, and every verb's step is a before / after
 // picture of all of it. No per-verb inverse, nothing partial to get wrong.
 //
-// ── the dice are FATED, so undo cannot be used to re-roll ──────────────────
-// The random state is part of the record. Each roll draws five faces from it --
-// always five, whatever is held -- and a die that is not held takes its own
-// slot's face. Undo a roll and roll again with the same holds: the same dice.
-// (Solitaire's fixed deck, the same idea.) Undo is for a mis-click, not luck.
-// The draw is our own (splitmix64 + rejection), not std::uniform_int_
-// distribution, so a seed gives the same dice on every compiler -- the
-// selftest pins a sequence.
+// ── a roll is final ────────────────────────────────────────────────────────
+// Scott, s002: no undo for rolls. A roll ends undo (the journal is cleared
+// after it): holds and the box you took can be undone, never a roll.
+// The random state still lives in the record and each roll draws five faces,
+// one per slot (our own splitmix64 draw, not std::uniform_int_distribution),
+// so a seed gives the same game on every compiler -- the selftest pins one.
 //
 // ── the one door ───────────────────────────────────────────────────────────
 // Every write goes through Journal::run (verbs below). The store counts a write
@@ -48,7 +46,7 @@ struct GameState {
     Dice                 dice{};              // 0s until the turn's first roll
     std::array<bool, 5>  held{};
     int                  rolls_used = 0;      // this turn, 0..3
-    std::uint64_t        rng        = 0;      // the fate: travels with undo
+    std::uint64_t        rng        = 0;      // the dice to come (seeded per game)
     bool operator==(const GameState&) const = default;
 
     bool over() const;                        // every card full

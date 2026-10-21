@@ -1,5 +1,6 @@
 #pragma once
 #include "DiceRow.hpp"
+#include "Engine.hpp"
 #include "HintPanel.hpp"
 #include "Scorecard.hpp"
 #include "StatsPanel.hpp"
@@ -35,6 +36,7 @@
 //   "What does Roll do?"                -> Shell_handlers.cpp (on_roll)
 //   "Where do the 1-5 keys go?"         -> Shell_bindings.cpp (bind_actions)
 //   "Who repaints after a move?"        -> Shell_helpers.cpp  (queue_repaint / repaint)
+//   "Where do the hints come from?"     -> Engine.{hpp,cpp} (table) + HintPanel::show (advice)
 //   "Where does Ctrl+Z go?"             -> Shell_bindings.cpp (the window's undo keys)
 // ─────────────────────────────────────────────────────────────────────────────
 namespace yatze {
@@ -77,12 +79,15 @@ private:
     std::string status_text() const;             // category: helper: whose turn / who won
     void update_undo_ui();                       // category: helper: labels + grey
     void apply_drawers();                        // category: helper: revealers + scrim
+    void refresh_hints();                        // category: helper: the advice, if the drawer is open
     bool focus_is_text() const;                  // category: helper: a text box keeps its own Ctrl+Z
 
     // ── the model ──────────────────────────────────────────────────────────
     // Declaration order matters: the store before the journal that holds it.
     model::GameStore   m_store;
     model::GameJournal m_journal{m_store};
+    Engine             m_engine;                 // the strategy table (hints; the computer player)
+    sigc::connection   m_progress_tick;          // repaints "Working out the odds… N%"
     int                m_table = 1;              // players at the table (hot seat)
     bool               m_repaint_queued = false;
 

@@ -83,10 +83,13 @@ void new_game(GameStore& s, GameJournal& j, std::vector<Player> players, std::ui
     j.clear();
 }
 
+// A roll is FINAL (Scott, s002: "no undos for rolls"). It goes through the
+// door like every write, then ends undo: holds and a mis-picked box can be
+// taken back, but never past the last roll.
 bool roll(GameStore& s, GameJournal& j) {
     if (!can_roll(s.state())) return false;
     const int n = s.state().rolls_used + 1;
-    return j.run(n == 1 ? "Roll" : "Roll " + std::to_string(n), {GameStore::kGame}, [&] {
+    j.run(n == 1 ? "Roll" : "Roll " + std::to_string(n), {GameStore::kGame}, [&] {
         GameState g = s.state();
         const Dice fate = draw_five(g.rng);       // always five: fate per slot
         for (int i = 0; i < 5; ++i)
@@ -94,6 +97,8 @@ bool roll(GameStore& s, GameJournal& j) {
         ++g.rolls_used;
         s.put(GameStore::kGame, g);
     });
+    j.clear();
+    return true;
 }
 
 bool toggle_hold(GameStore& s, GameJournal& j, int die) {

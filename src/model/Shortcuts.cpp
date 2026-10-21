@@ -124,7 +124,7 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // ── Edit ──────────────────────────────────────────────────────────────
         // Doc-only ON PURPOSE: an accelerator would take Ctrl+Z from every text
         // box. The window hears these instead (Shell_bindings.cpp).
-        {"Edit", "", {}, "Ctrl+Z", "Undo (a roll comes back the same -- the dice are fated)"},
+        {"Edit", "", {}, "Ctrl+Z", "Undo a hold or the box you took (a roll is final)"},
         {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
 
         // ── Game ──────────────────────────────────────────────────────────────

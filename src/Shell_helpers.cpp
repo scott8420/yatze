@@ -29,6 +29,11 @@ void Shell::repaint() {  // helper: dice, card, status, actions
     m_roll.set_label(g.over() ? "Game over" : g.rolls_used == 0 ? "Roll"
                      : "Roll  (" + std::to_string(g.rolls_left()) + " left)");
     if (m_drawers.is_open(model::Drawers::Side::Right)) m_stats.show(g);
+    refresh_hints();
+}
+
+void Shell::refresh_hints() {  // helper: only while the drawer is open -- hidden advice costs nothing
+    if (m_drawers.is_open(model::Drawers::Side::Left)) m_hints.show(m_store.state(), m_engine);
 }
 
 std::string Shell::status_text() const {  // helper
@@ -64,6 +69,7 @@ void Shell::update_undo_ui() {  // helper
 void Shell::apply_drawers() {  // helper
     using Side = model::Drawers::Side;
     if (m_drawers.is_open(Side::Right)) m_stats.show(m_store.state());
+    refresh_hints();
     m_left_drawer.set_reveal_child(m_drawers.is_open(Side::Left));
     m_right_drawer.set_reveal_child(m_drawers.is_open(Side::Right));
     m_scrim.set_visible(m_drawers.scrim());

@@ -24,10 +24,14 @@ Deps (Ubuntu/Debian): `libgtkmm-4.0-dev libspdlog-dev cmake g++`.
 - **R** or the Roll button rolls every die not held; three rolls a turn.
 - Click a die (or press **1–5**) to hold it.
 - The scorecard shows what each open box would score; click one to take it.
-- **Ctrl+Z / Ctrl+Shift+Z** undo / redo. The dice are fated: undo a roll and
-  roll again and the same dice come up.
+- **Ctrl+Z / Ctrl+Shift+Z** undo / redo a hold or the box you took. A roll
+  is final.
 - **F9** rules, **Shift+F9** standings, **Esc** closes. **Ctrl+N** new game;
   menu › New game with… for 1–4 players.
 - **Ctrl+?** lists every key.
 
 "Yatzé!" is this game's name; it is not affiliated with Hasbro's Yahtzee®.
+
+## License
+
+MIT -- see LICENSE.
