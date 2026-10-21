@@ -12,11 +12,8 @@
 namespace yatze {
 
 void Shell::bind_actions() {  // bindings
-    add_action("new-game", [this] { on_new_game(0); });
-    add_action_with_parameter("new-table", Glib::Variant<int>::variant_type(),
-        [this](const Glib::VariantBase& v) {
-            on_new_game(Glib::VariantBase::cast_dynamic<Glib::Variant<int>>(v).get());
-        });
+    add_action("new-game",        sigc::mem_fun(*this, &Shell::on_new_game));
+    add_action("new-game-dialog", sigc::mem_fun(*this, &Shell::on_new_game_dialog));
     m_act_roll = add_action("roll", sigc::mem_fun(*this, &Shell::on_roll));
     for (int i = 0; i < 5; ++i)
         add_action("hold-" + std::to_string(i + 1), [this, i] { on_hold(i); });
@@ -27,9 +24,11 @@ void Shell::bind_actions() {  // bindings
     add_action("about",     sigc::mem_fun(*this, &Shell::on_about));
     add_action("shortcuts", sigc::mem_fun(*this, &Shell::on_shortcuts));
     add_action("quit",      [this] { close(); });
+    m_act_dice = add_action_radio_string("dice-style", sigc::mem_fun(*this, &Shell::on_dice_style), "red");
 
     // The widgets ask; the handlers act through the verbs.
     m_dice.signal_die().connect(sigc::mem_fun(*this, &Shell::on_hold));
+    m_dice3d.signal_die().connect(sigc::mem_fun(*this, &Shell::on_hold));
     m_card.signal_pick().connect(sigc::mem_fun(*this, &Shell::on_score));
 
     // Model <-> journal <-> UI. The store asks the journal whether the door is

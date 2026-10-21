@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Yatze build. Deps (Ubuntu/Debian): libgtkmm-4.0-dev libspdlog-dev cmake g++.
+# Yatze build. Deps (Fedora): gtkmm4.0-devel spdlog-devel libepoxy-devel cmake gcc-c++.
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 cmake -B build

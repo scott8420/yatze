@@ -128,7 +128,8 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
 
         // ── Game ──────────────────────────────────────────────────────────────
-        {"Game", "win.new-game", {"<Ctrl>n"}, "", "New game"},
+        {"Game", "win.new-game",        {"<Ctrl>n"},        "", "New game, same players"},
+        {"Game", "win.new-game-dialog", {"<Ctrl><Shift>n"}, "", "New game: choose the players"},
 
         // ── General ───────────────────────────────────────────────────────────
         {"General", "win.shortcuts", {"<Ctrl>question", "<Ctrl>slash"}, "", "Keyboard shortcuts"},

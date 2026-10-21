@@ -6,11 +6,18 @@
 // Undo: every verb through the one door (the gate), undo puts the picture back,
 // and the FATE -- undo a roll, roll again, same dice.
 
+#include "gfx/DieFaces.hpp"
+#include "gfx/Mesh.hpp"
+#include "model/Computer.hpp"
 #include "model/Drawers.hpp"
 #include "model/Game.hpp"
 #include "model/Rules.hpp"
 #include "model/Shortcuts.hpp"
 #include "model/Strategy.hpp"
+#include "model/TableFile.hpp"
+#include "model/Settings.hpp"
+
+#include <fstream>
 
 #include <chrono>
 #include <cmath>
@@ -392,6 +399,134 @@ int main() {
         check("advise: holds are distinct keeps (not all five)", !a.holds.empty() &&
               std::all_of(a.holds.begin(), a.holds.end(), [](const st::HoldAdvice& h) { return h.count < 5; }));
         check("advise: no table -> no advice", st::advise(st::Table{}, empty, {1, 2, 3, 4, 5}, 2).boxes.empty());
+    }
+
+    std::cout << "[computer]\n";
+    {
+        namespace cpu = model::computer;
+        // Whole solo games at each level, driven one step at a time exactly as
+        // the UI drives them. Returns the mean final score; counts refusals.
+        int refused = 0, stuck = 0;
+        auto play = [&](model::Level lv, int games, std::uint64_t seed0) {
+            double sum = 0;
+            for (int gm = 0; gm < games; ++gm) {
+                model::GameStore s;
+                model::GameJournal j{s};
+                s.set_door([&j] { return j.open(); });
+                model::verbs::new_game(s, j, {{"CPU", model::Seat::Computer, lv}}, seed0 + gm);
+                int steps = 0;
+                while (!s.state().over() && steps < 2000) {
+                    const auto st = cpu::decide(s.state(), &table);
+                    if (!cpu::apply(s, j, st)) { ++refused; break; }
+                    ++steps;
+                }
+                if (!s.state().over()) ++stuck;
+                sum += s.state().players[0].card.total();
+                if (s.strays()) ++refused;
+            }
+            return sum / games;
+        };
+        const int n = 400;
+        const double easy = play(model::Level::Easy, n, 5000);
+        const double med  = play(model::Level::Medium, n, 5000);
+        const double hard = play(model::Level::Hard, n, 5000);
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "easy %.1f  medium %.1f  hard %.1f  (%d games each)", easy, med, hard, n);
+        std::cout << "        " << buf << "\n";
+        check("computer: every step accepted, every game finished, no strays", refused == 0 && stuck == 0,
+              std::to_string(refused) + " refused, " + std::to_string(stuck) + " stuck");
+        check("computer: easy < medium < hard", easy < med && med < hard, buf);
+        // Hard's mean over 400 games: 254.6 +- ~3 (sd ~60 / sqrt 400). 4 sd band.
+        check("computer: hard averages the optimum (254.6 +- 12)", std::fabs(hard - 254.59) < 12, buf);
+        check("computer: easy is a real step down (< 225)", easy < 225, buf);
+        check("computer: medium sits between (225..250)", med > 225 && med < 250, buf);
+
+        // Same seed, same game: the levels are deterministic (Medium's slips too).
+        check("computer: a seeded game replays exactly", play(model::Level::Medium, 3, 77) == play(model::Level::Medium, 3, 77));
+
+        // Without a table, Medium and Hard wait; Easy plays.
+        model::GameStore s;
+        model::GameJournal j{s};
+        model::verbs::new_game(s, j, {{"H", model::Seat::Computer, model::Level::Hard}}, 9);
+        model::verbs::roll(s, j);
+        check("computer: hard waits for the table", cpu::decide(s.state(), nullptr).kind == cpu::Step::Kind::None);
+        model::verbs::new_game(s, j, {{"E", model::Seat::Computer, model::Level::Easy}}, 9);
+        model::verbs::roll(s, j);
+        check("computer: easy needs no table", cpu::decide(s.state(), nullptr).kind != cpu::Step::Kind::None);
+        model::verbs::new_game(s, j, {{"You"}}, 9);
+        check("computer: never moves for a human", cpu::decide(s.state(), &table).kind == cpu::Step::Kind::None);
+
+        // A mixed table: a human seat between two computers; the computers'
+        // turns finish on their own and stop at the human.
+        model::verbs::new_game(s, j, {{"A", model::Seat::Computer, model::Level::Hard},
+                                      {"You"},
+                                      {"B", model::Seat::Computer, model::Level::Easy}}, 31);
+        int guard = 0;
+        while (s.state().current == 0 && guard++ < 50) cpu::apply(s, j, cpu::decide(s.state(), &table));
+        check("computer: a computer turn ends at the human seat", s.state().current == 1 &&
+              !s.state().players[0].card.full() && s.state().players[0].card.box != model::Card{}.box);
+    }
+
+    std::cout << "[table file]\n";
+    {
+        namespace tf = model::table_file;
+        const auto dir  = std::filesystem::temp_directory_path() / "yatze_selftest_cfg";
+        const auto file = (dir / "sub" / "table.json").string();
+        std::filesystem::remove_all(dir);
+        const std::vector<model::Player> seats = {
+            {"You"}, {"Ann \u00e9"}, {"Bot", model::Seat::Computer, model::Level::Hard},
+            {"Easy Ed", model::Seat::Computer, model::Level::Easy}};
+        check("table file: saves (making its folder)", tf::save(file, seats));
+        const auto back = tf::load(file);
+        bool same = back.size() == seats.size();
+        for (std::size_t i = 0; same && i < seats.size(); ++i)
+            same = back[i].name == seats[i].name && back[i].seat == seats[i].seat &&
+                   (seats[i].seat == model::Seat::Human || back[i].level == seats[i].level);
+        check("table file: round-trips names (UTF-8), seats, levels", same);
+        check("table file: missing -> nothing remembered", tf::load((dir / "nope.json").string()).empty());
+        { std::ofstream bad(file); bad << "{ not json"; }
+        check("table file: garbage -> nothing remembered", tf::load(file).empty());
+        { std::ofstream bad(file); bad << R"({"version":1,"seats":[{"name":"X","seat":"alien"}]})"; }
+        check("table file: unknown seat kind -> nothing remembered", tf::load(file).empty());
+        std::filesystem::remove_all(dir);
+    }
+
+    std::cout << "[settings]\n";
+    {
+        namespace st = model::settings;
+        const auto file = (std::filesystem::temp_directory_path() / "yatze_selftest_set" / "settings.json").string();
+        std::filesystem::remove_all(std::filesystem::path(file).parent_path());
+        check("settings: default dice are red", st::load(file).dice == st::DiceStyle::Red);
+        check("settings: ivory saves and comes back", st::save(file, {st::DiceStyle::Ivory}) &&
+              st::load(file).dice == st::DiceStyle::Ivory);
+        { std::ofstream bad(file); bad << R"({"version":1,"dice":"plaid"})"; }
+        check("settings: an unknown dice style keeps the default", st::load(file).dice == st::DiceStyle::Red);
+        std::filesystem::remove_all(std::filesystem::path(file).parent_path());
+    }
+
+    std::cout << "[3d: the die's faces]\n";
+    {
+        namespace gfx = yatze::gfx;
+        bool sums = true, top = true, front = true, twisted = true;
+        for (int v = 1; v <= 6; ++v) {
+            if (gfx::length(gfx::face_normal(v) + gfx::face_normal(7 - v)) > 1e-6f) sums = false;
+            if (gfx::value_facing(gfx::show(v, {0, 1, 0}), {0, 1, 0}) != v) top = false;     // the 3/4 view: on top
+            if (gfx::value_facing(gfx::show(v, {0, 0, 1}), {0, 0, 1}) != v) front = false;   // presented: facing you
+            for (float tw = 0; tw < 6.3f; tw += 0.7f)
+                if (gfx::value_facing(gfx::show(v, {0, 1, 0}, tw), {0, 1, 0}) != v) twisted = false;
+        }
+        check("3d: opposite faces sum to 7", sums);
+        check("3d: every value lands on top when shown up", top);
+        check("3d: every value faces you when presented", front);
+        check("3d: a die spun on the felt still shows its value", twisted);
+        // 1-2-3 counterclockwise around their corner, as on a Western die.
+        const auto c = gfx::cross(gfx::face_normal(1), gfx::face_normal(2));
+        check("3d: 1-2-3 run counterclockwise (Western die)", gfx::dot(c, gfx::face_normal(3)) > 0.5f);
+        const auto mesh = gfx::rounded_cube();
+        bool inside = true;
+        for (const auto& v : mesh.verts)
+            if (std::fabs(v.px) > 0.5001f || std::fabs(v.py) > 0.5001f || std::fabs(v.pz) > 0.5001f) inside = false;
+        check("3d: the rounded die fits its unit cube", inside && !mesh.index.empty());
     }
 
     std::cout << "[drawers]\n";

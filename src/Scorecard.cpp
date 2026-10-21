@@ -11,12 +11,16 @@ namespace yatze {
 using model::Category;
 
 namespace {
+// Every cell is this tall (a score button's natural height), so the card never
+// changes shape between "before the roll", "after it" and "not your turn".
+constexpr int kRowHeight = 30;
+
 Gtk::Label* cell(const std::string& text, float xalign = 1.0f) {
     auto* l = Gtk::make_managed<Gtk::Label>(text);
     l->set_xalign(xalign);
     l->set_margin_start(6);
     l->set_margin_end(6);
-    l->add_css_class("card-cell");   // one row height whether a box is a button or not
+    l->set_size_request(-1, kRowHeight);   // one row height, button or not
     return l;
 }
 }  // namespace
@@ -32,7 +36,7 @@ void Scorecard::clear() {
     while (auto* c = get_first_child()) remove(*c);
 }
 
-void Scorecard::set(const model::GameState& g) {
+void Scorecard::set(const model::GameState& g, bool interactive) {
     clear();
     const int n = int(g.players.size());
     const bool live = !g.over() && g.rolls_used > 0;
@@ -41,7 +45,11 @@ void Scorecard::set(const model::GameState& g) {
 
     // Header: player names; the current one marked.
     for (int p = 0; p < n; ++p) {
-        auto* h = cell(g.players[p].name, 0.5f);
+        const auto& pl = g.players[p];
+        auto* h = cell(pl.name, 0.5f);
+        if (pl.seat == model::Seat::Computer)
+            h->set_tooltip_text(std::string("Computer \u2014 ") +
+                                (pl.level == model::Level::Easy ? "Easy" : pl.level == model::Level::Medium ? "Medium" : "Hard"));
         h->add_css_class("heading");
         if (p == g.current && !g.over()) h->add_css_class("current-player");
         attach(*h, 1 + p, 0);
@@ -62,8 +70,10 @@ void Scorecard::set(const model::GameState& g) {
                 auto* b = Gtk::make_managed<Gtk::Button>(opt.allowed[i] ? std::to_string(opt.points[i]) : "");
                 b->set_name("play.score." + std::to_string(i));
                 b->add_css_class("score-option");
+                b->set_size_request(-1, kRowHeight);
+                if (i == m_suggested && interactive && opt.allowed[i]) b->add_css_class("suggested");
                 if (opt.allowed[i] && opt.points[i] == 0) b->add_css_class("zero");
-                b->set_sensitive(opt.allowed[i]);
+                b->set_sensitive(interactive && opt.allowed[i]);
                 if (opt.allowed[i])
                     b->set_tooltip_text("Take " + std::to_string(opt.points[i]) + " in " + std::string(model::name(c)));
                 b->signal_clicked().connect([this, c] { m_sig_pick.emit(c); });
@@ -108,6 +118,19 @@ void Scorecard::set(const model::GameState& g) {
         return c.bonuses ? "+" + std::to_string(c.bonuses * model::kYatzeBonus) : std::string("");
     }, false);
     sum_row("Total", [](const model::Card& c) { return std::to_string(c.total()); }, true);
+}
+
+void Scorecard::set_suggested(int box) {
+    if (box == m_suggested) return;
+    m_suggested = box;
+    // Re-mark the buttons in place (a full rebuild waits for the next set()).
+    for (auto* c = get_first_child(); c; c = c->get_next_sibling()) {
+        if (!c->has_css_class("score-option")) continue;
+        const std::string n = c->get_name();
+        const int i = n.rfind("play.score.", 0) == 0 ? std::stoi(n.substr(11)) : -1;
+        if (i == box && c->get_sensitive()) c->add_css_class("suggested");
+        else c->remove_css_class("suggested");
+    }
 }
 
 }  // namespace yatze

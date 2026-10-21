@@ -11,6 +11,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
 find_package(spdlog REQUIRED)
+pkg_check_modules(EPOXY REQUIRED epoxy)   # OpenGL loader (GTK itself uses it)
 
 # ── yatze_model -- GTK-free, BY DESIGN ───────────────────────────────────────
 # No gtkmm on this library's link line: a UI include under model/ fails to
@@ -21,9 +22,13 @@ add_library(yatze_model STATIC
     src/model/Rules.cpp
     src/model/Game.cpp
     src/model/Strategy.cpp
+    src/model/Computer.cpp
+    src/model/TableFile.cpp
+    src/model/Settings.cpp
     src/model/Shortcuts.cpp
 )
 target_include_directories(yatze_model PUBLIC include)
+target_include_directories(yatze_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)   # json.hpp: the model's business only
 # The strategy engine is optimised in EVERY build type: its table (~1M states)
 # takes seconds at -O2 and minutes at -O0, and Debug is the default here.
 set_source_files_properties(src/model/Strategy.cpp PROPERTIES COMPILE_OPTIONS "-O2")
@@ -64,8 +69,10 @@ add_executable(yatze
     src/Shell_handlers.cpp
     src/Shell_helpers.cpp
     src/DiceRow.cpp
+    src/DiceView.cpp
     src/Scorecard.cpp
     src/HintPanel.cpp
+    src/NewGameDialog.cpp
     src/Engine.cpp
     src/StatsPanel.cpp
     src/AboutWindow.cpp
@@ -73,7 +80,7 @@ add_executable(yatze
     src/Registry.cpp
     src/Log.cpp
 )
-target_include_directories(yatze PRIVATE include ${GTKMM_INCLUDE_DIRS})
-target_link_libraries(yatze     PRIVATE ${GTKMM_LIBRARIES} yatze_model spdlog::spdlog)
+target_include_directories(yatze PRIVATE include ${GTKMM_INCLUDE_DIRS} ${EPOXY_INCLUDE_DIRS})
+target_link_libraries(yatze     PRIVATE ${GTKMM_LIBRARIES} ${EPOXY_LIBRARIES} yatze_model spdlog::spdlog)
 target_link_directories(yatze   PRIVATE ${GTKMM_LIBRARY_DIRS})
 target_compile_options(yatze    PRIVATE ${GTKMM_CFLAGS_OTHER})

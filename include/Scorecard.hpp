@@ -14,11 +14,16 @@ namespace yatze {
 class Scorecard : public widgets::Grid {
 public:
     Scorecard();
-    void set(const model::GameState& g);
+    // interactive = a person is to move; on a computer's turn its options show
+    // but cannot be clicked.
+    void set(const model::GameState& g, bool interactive = true);
+    // The hint's box (-1 none): outlined amber. Kept across set() calls.
+    void set_suggested(int box);
     sigc::signal<void(model::Category)>& signal_pick() { return m_sig_pick; }
 
 private:
     void clear();
+    int  m_suggested = -1;
     sigc::signal<void(model::Category)> m_sig_pick;
 };
 

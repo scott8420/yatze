@@ -27,11 +27,13 @@
 
 namespace yatze::model {
 
-enum class Seat { Human, Computer };
+enum class Seat  { Human, Computer };
+enum class Level { Easy, Medium, Hard };   // a computer seat's skill
 
 struct Player {
     std::string name;
-    Seat        seat = Seat::Human;
+    Seat        seat  = Seat::Human;
+    Level       level = Level::Medium;     // used only when seat == Computer
     Card        card;
     bool operator==(const Player&) const = default;
 };

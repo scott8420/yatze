@@ -49,9 +49,10 @@ inline const char* YATZE_CSS = R"CSS(
     button.die:focus-visible { outline: 2px solid alpha(currentColor, 0.5); }
 
     /* Scorecard: the boxes you could take now, and whose turn it is. */
-    .card-cell, button.score-option { min-height: 28px; }
     button.score-option { min-width: 48px; padding: 0 8px; font-weight: bold; }
     button.score-option.zero { font-weight: normal; opacity: 0.6; }
+    /* The hint's box: outlined in the same amber the dice glow in. */
+    button.score-option.suggested { box-shadow: 0 0 0 2px rgba(255, 178, 56, 0.95); }
     .current-player { border-bottom: 3px solid alpha(currentColor, 0.6); }
 
     /* Transparent click-away catcher; shown only while a drawer is open. */

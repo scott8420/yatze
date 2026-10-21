@@ -19,6 +19,8 @@ public:
 
     // Faces (0 = not rolled), which are held, whether holding is allowed now.
     void set(const model::Dice& dice, const std::array<bool, 5>& held, bool can_hold);
+    void set_glow(const std::array<bool, 5>& glow);   // the hint's suggested dice
+    void set_red(bool red);                           // the same dice style as the 3D view
     sigc::signal<void(int)>& signal_die() { return m_sig_die; }
 
 private:
@@ -28,6 +30,8 @@ private:
     std::array<widgets::DrawingArea*, 5> m_faces{};
     model::Dice                          m_dice{};
     std::array<bool, 5>                  m_held{};
+    std::array<bool, 5>                  m_glow{};
+    bool                                 m_red = true;
     sigc::signal<void(int)>              m_sig_die;
 };
 

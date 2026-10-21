@@ -61,6 +61,18 @@ void DiceRow::set(const model::Dice& dice, const std::array<bool, 5>& held, bool
     }
 }
 
+void DiceRow::set_red(bool red) {
+    if (red == m_red) return;
+    m_red = red;
+    for (auto* f : m_faces) f->queue_draw();
+}
+
+void DiceRow::set_glow(const std::array<bool, 5>& glow) {
+    if (glow == m_glow) return;
+    m_glow = glow;
+    for (auto* f : m_faces) f->queue_draw();
+}
+
 // A die is a physical thing: ivory with dark pips in light and dark themes
 // alike. A held die gets the accent ring and sits a little lower ("set aside").
 void DiceRow::draw_die(const Cairo::RefPtr<Cairo::Context>& cr, int w, int h, int i) {
@@ -70,20 +82,28 @@ void DiceRow::draw_die(const Cairo::RefPtr<Cairo::Context>& cr, int w, int h, in
     const double r   = s * 0.16;
     const int    f   = m_dice[i];
 
+    // the hint's glow, behind the die
+    if (m_glow[i]) {
+        rounded_rect(cr, x - 4, y - 4, s + 8, s + 8, r + 4);
+        cr->set_source_rgba(1.0, 0.70, 0.22, 0.75);
+        cr->fill();
+    }
     // shadow
     rounded_rect(cr, x + 2, y + 3, s, s, r);
     cr->set_source_rgba(0, 0, 0, 0.25);
     cr->fill();
     // body
     rounded_rect(cr, x, y, s, s, r);
-    if (f == 0) cr->set_source_rgba(0.80, 0.80, 0.78, 0.35);   // not rolled yet
-    else        cr->set_source_rgb(0.98, 0.97, 0.93);
+    if (f == 0)     cr->set_source_rgba(0.80, 0.80, 0.78, 0.35);   // not rolled yet
+    else if (m_red) cr->set_source_rgb(0.74, 0.06, 0.07);
+    else            cr->set_source_rgb(0.98, 0.97, 0.93);
     cr->fill_preserve();
     if (m_held[i]) { cr->set_source_rgb(0.21, 0.52, 0.89); cr->set_line_width(4.0); }
     else           { cr->set_source_rgba(0, 0, 0, 0.35);      cr->set_line_width(1.0); }
     cr->stroke();
     // pips
-    cr->set_source_rgb(0.12, 0.12, 0.14);
+    if (m_red) cr->set_source_rgb(0.97, 0.96, 0.93);
+    else       cr->set_source_rgb(0.12, 0.12, 0.14);
     const double step = s / 4.0, pr = s * 0.085;
     for (auto [cx, cy] : pips(f)) {
         cr->arc(x + step * (cx + 1), y + step * (cy + 1), pr, 0, 2 * M_PI);

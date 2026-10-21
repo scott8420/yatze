@@ -22,7 +22,7 @@ void Shell::build_shell() {  // zone: header + play area + scorecard
     header->pack_start(m_logo_button);
 
     m_new_button.set_label("New Game");
-    m_new_button.set_tooltip_text("New game, same table  (Ctrl+N)");
+    m_new_button.set_tooltip_text("New game, same players  (Ctrl+N; Ctrl+Shift+N to change them)");
     m_new_button.set_action_name("win.new-game");
     header->pack_start(m_new_button);
 
@@ -33,13 +33,19 @@ void Shell::build_shell() {  // zone: header + play area + scorecard
 
     // Play area: whose turn, the dice, Roll, what undo just did.
     m_play.set_hexpand(true);
-    m_play.set_valign(Gtk::Align::CENTER);
-    m_play.set_margin(24);
+    m_play.set_vexpand(true);
+    m_play.set_margin(18);
     m_status.add_css_class("title-3");
     m_status.set_wrap(true);
     m_status.set_justify(Gtk::Justification::CENTER);
     m_play.append(m_status);
-    m_play.append(m_dice);
+    // The dice: the 3D table, or the flat row if OpenGL cannot start.
+    m_dice_stack.add(m_dice3d, "3d");
+    m_dice_stack.add(m_dice, "flat");
+    m_dice_stack.set_visible_child("3d");
+    m_dice_stack.set_vexpand(true);
+    m_dice3d.signal_failed().connect([this] { m_dice_stack.set_visible_child("flat"); });
+    m_play.append(m_dice_stack);
     m_roll.set_label("Roll");
     m_roll.add_css_class("suggested-action");
     m_roll.add_css_class("pill");
@@ -120,21 +126,20 @@ void Shell::build_drawers() {  // zone: overlay, two drawers, tabs, scrim
 Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     auto menu = Gio::Menu::create();
 
-    // Hot seat for now; computer players arrive with the New Game dialog.
     auto game = Gio::Menu::create();
     game->append("New game", "win.new-game");
-    auto table = Gio::Menu::create();
-    table->append("1 player",  "win.new-table(1)");
-    table->append("2 players", "win.new-table(2)");
-    table->append("3 players", "win.new-table(3)");
-    table->append("4 players", "win.new-table(4)");
-    game->append_submenu("New game with…", table);
+    game->append("New game\u2026", "win.new-game-dialog");   // who plays
     menu->append_section(game);
 
     m_edit_menu = Gio::Menu::create();   // re-labelled live by update_undo_ui
     m_edit_menu->append("Undo", "win.undo");
     m_edit_menu->append("Redo", "win.redo");
     menu->append_section(m_edit_menu);
+
+    auto dice = Gio::Menu::create();   // radio items: the action's state is the choice
+    dice->append("Red dice",   "win.dice-style::red");
+    dice->append("Ivory dice", "win.dice-style::ivory");
+    menu->append_section(dice);
 
     auto view = Gio::Menu::create();
     view->append("Rules and hints", "win.toggle-left-drawer");
