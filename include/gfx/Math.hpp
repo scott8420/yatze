@@ -100,6 +100,12 @@ struct Mat4 {
         r.m = {t / aspect, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, 2 * f * n / (n - f), 0};
         return r;
     }
+    // Orthographic, symmetric: half-width w, half-height h (s011: the light's view).
+    static Mat4 ortho(float w, float h, float n, float f) {
+        Mat4 r;
+        r.m = {1 / w, 0, 0, 0, 0, 1 / h, 0, 0, 0, 0, -2 / (f - n), 0, 0, 0, -(f + n) / (f - n), 1};
+        return r;
+    }
     static Mat4 look_at(const Vec3& eye, const Vec3& at, const Vec3& up) {
         const Vec3 f = normalize(at - eye), s = normalize(cross(f, up)), u = cross(s, f);
         Mat4 r;

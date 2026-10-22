@@ -26,6 +26,11 @@
 //    is fitted to the spread the dice are about to reach, so it never crops.
 //
 // Held dice do not roll: they wait at their slots at the front, result up.
+//
+// 4. THE CUP (s010). The take opens with the cup at your side, shaken and
+//    tipping (the rattle plays here), the dice inside it; at the SPILL they
+//    leave its mouth and the physics begins; the cup follows through and is
+//    lifted up out of the shot.
 #include "gfx/Math.hpp"
 
 #include <array>
@@ -37,14 +42,33 @@ namespace yatze::gfx {
 struct DiePose { Vec3 pos; Quat rot; };
 struct CamPose { Vec3 eye, at; };
 
+// One knock during the take (s009: the sounds are mixed from these).
+struct Contact {
+    enum class Kind { Felt, Die, Rail };
+    double t;        // seconds into the take
+    Vec3   pos;      // where (world)
+    float  speed;    // impact speed along the contact normal (units / s)
+    Kind   kind;
+    int    die;      // which die knocked
+};
+
+// The cup: an open cylinder, centred on `pos`, its axis (base -> mouth) the
+// rotated +Y.
+inline constexpr float kCupRadius = 1.5f, kCupHeight = 3.2f;
+struct CupPose { Vec3 pos; Quat rot; bool shown; Vec3 axis() const { return rot.rotate({0, 1, 0}); } };
+
 struct Take {
     static constexpr double kFps = 60.0;
     std::vector<std::array<DiePose, 5>> frames;   // at kFps
     std::vector<CamPose>                cams;     // one per frame
+    std::vector<Contact>                contacts; // every audible knock, in time order
+    std::vector<CupPose>                cups;     // one per frame (s010)
+    double                              spill = 0;  // the dice leave the cup (before it, rolled dice are inside)
     double duration() const { return frames.empty() ? 0.0 : double(frames.size() - 1) / kFps; }
     // Interpolated at time t (clamped to the take).
     std::array<DiePose, 5> dice_at(double t) const;
     CamPose                cam_at(double t) const;
+    CupPose                cup_at(double t) const;
 };
 
 struct Shot {
@@ -59,6 +83,10 @@ struct Shot {
 Take shoot(const Shot& shot);
 
 // The table the dice stay on (the rails), for the view and the selftest.
+// s009: the tray is DRAWN -- a padded back wall and two side rails, their
+// inner faces exactly on these planes; your side is open (the front plane
+// only keeps a stray die from rolling into your lap, and makes no sound).
 inline constexpr float kRailX = 3.7f, kRailBack = -3.5f, kRailFront = 1.05f;
+inline constexpr float kBackWallHeight = 2.0f, kSideRailHeight = 1.2f, kRailThick = 0.5f;
 
 }  // namespace yatze::gfx

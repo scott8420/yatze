@@ -3,6 +3,7 @@
 #include <gtkmm/button.h>
 #include <gtkmm/label.h>
 #include <gtkmm/separator.h>
+#include <glibmm/main.h>
 
 #include <string>
 
@@ -64,7 +65,10 @@ void Scorecard::set(const model::GameState& g, bool interactive, bool reveal) {
             const auto& card = g.players[p].card;
             const int i = model::index(c);
             if (!card.open(c)) {
-                attach(*cell(std::to_string(card.box[i])), 1 + p, row);
+                auto* v = cell(std::to_string(card.box[i]));
+                v->add_css_class("score-cell");
+                if (p == m_flash_player && i == m_flash_box) v->add_css_class("just-scored");
+                attach(*v, 1 + p, row);
             } else if (p == g.current && live) {
                 // What it would score; a button only where the rules allow it.
                 auto* b = Gtk::make_managed<Gtk::Button>(opt.allowed[i] ? std::to_string(opt.points[i]) : "");
@@ -118,6 +122,26 @@ void Scorecard::set(const model::GameState& g, bool interactive, bool reveal) {
         return c.bonuses ? "+" + std::to_string(c.bonuses * model::kYatzeBonus) : std::string("");
     }, false);
     sum_row("Total", [](const model::Card& c) { return std::to_string(c.total()); }, true);
+}
+
+// Rows: header 0; upper boxes 1..6; rule, Upper, Bonus, rule (7..10); lower
+// boxes from 11.
+Gtk::Widget* Scorecard::box_cell(int player, int box) {
+    if (box < 0 || box >= model::kCategories) return nullptr;
+    const int row = box < model::kUpper ? 1 + box : 11 + (box - model::kUpper);
+    return get_child_at(1 + player, row);
+}
+
+void Scorecard::flash(int player, int box) {
+    m_flash_player = player;
+    m_flash_box = box;
+    if (auto* w = box_cell(player, box)) w->add_css_class("just-scored");
+    m_flash_off.disconnect();
+    m_flash_off = Glib::signal_timeout().connect([this] {
+        if (auto* w = box_cell(m_flash_player, m_flash_box)) w->remove_css_class("just-scored");   // fades (CSS)
+        m_flash_player = m_flash_box = -1;
+        return false;
+    }, 900);
 }
 
 void Scorecard::set_suggested(int box) {

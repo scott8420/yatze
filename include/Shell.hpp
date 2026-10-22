@@ -83,6 +83,7 @@ private:
     void on_about();                             // category: handler
     void on_shortcuts();                         // category: handler
     void on_dice_style(const Glib::ustring& k);  // category: handler: menu › Red / Ivory dice
+    void on_sound();
     void on_clear_history();                     // category: handler: menu › Clear high scores… (confirm)
 
     // ── helpers ────────────────────────────────────────────────────────────
@@ -90,6 +91,14 @@ private:
     void apply_settings();
     std::string history_file() const;            // category: helper: $XDG_DATA_HOME/yatze/history.json
     void check_game_over();                      // category: helper: record a finished game, once                       // category: helper: the dice style into both dice views
+    void announce_turn();                        // category: helper: the turn card (s013)
+    void fly_score(int player, int box, int points);  // category: helper: the score flies to its box (s014)
+    static double test_speed();                  // YATZE_SPEED (testing only)
+    static std::string dice_words(const model::GameState& g, bool rolling);  // category: helper (s018)
+    bool computer_quick() const;                 // category: helper (s017)
+    static constexpr double kQuickRate = 2.2;    // Quick pace: the computer's turn this much faster
+    void on_pace(const Glib::ustring& k);        // handler: menu › Computer pace
+    void remember_window();                      // helper: the window's size, saved on close (s017)
     std::string table_file() const;              // category: helper: $XDG_CONFIG_HOME/yatze/table.json
     bool human_turn() const;                     // category: helper: a person is to move (input allowed)
     void schedule_computer();                    // category: helper: queue the next computer step, paced
@@ -113,6 +122,8 @@ private:
     bool                       m_recorded = false;   // this game is in the history
     std::string                m_news;           // game over: who won, any new best
     Glib::RefPtr<Gio::SimpleAction> m_act_dice;
+    Glib::RefPtr<Gio::SimpleAction> m_act_sound;
+    Glib::RefPtr<Gio::SimpleAction> m_act_pace;
     std::vector<model::Player> m_seats;          // the table: who sits where, person or computer
     sigc::connection   m_cpu_tick;               // the pending computer step (one at a time)
     bool               m_repaint_queued = false;
@@ -121,6 +132,7 @@ private:
     widgets::Button     m_logo_button;
     widgets::Button     m_new_button;
     widgets::MenuButton m_menu_button;
+    widgets::Button     m_sound_button;          // s012: speaker on / muted (M)
 
     widgets::Box        m_content;               // play area | scorecard
     widgets::Box        m_play;
@@ -130,6 +142,19 @@ private:
     widgets::Overlay    m_table;                 // the 3D view + the orb over its corner (s008)
     ViewOrb             m_orb{m_dice3d};
     widgets::Button     m_reset_view;            // back to the standard view (Home)
+    // s013: whose turn it is, a card over the table when the turn passes
+    // (two or more seats); it fades by itself, and clicks pass through it.
+    widgets::Revealer   m_turn_reveal;
+    widgets::Box        m_turn_card;
+    widgets::Label      m_turn_name;
+    widgets::Label      m_turn_info;
+    sigc::connection    m_turn_hide;
+    // s014: the score in flight from the dice to its box.
+    widgets::Label      m_fly;
+    guint               m_fly_tick = 0;
+    gint64              m_fly_t0 = -1;
+    int                 m_fly_player = -1, m_fly_box = -1;
+    std::uint64_t       m_turn_seen = ~0ull;      // game / round / seat last announced
     DiceRow             m_dice;
     widgets::Button     m_roll;
     widgets::Label      m_said;                  // "Undid: Roll 2"

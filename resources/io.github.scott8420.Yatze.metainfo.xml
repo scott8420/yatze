@@ -24,13 +24,34 @@
       <li>Full rules: upper bonus, Yatzé bonuses and the Joker</li>
       <li>Live hints from an exact strategy engine: what to keep, which box to take</li>
       <li>Computer players at three levels, mixed freely with people</li>
-      <li>High scores and every player's record</li>
+      <li>The dice poured from a leather cup into a wooden tray, with real shadows and sound</li>
+      <li>Turn the table to look from any side; a cheer for every Yatzé</li>
+      <li>Your scores over time, high scores and every player's record</li>
       <li>Red or ivory dice, undo for holds and boxes, full keyboard play</li>
     </ul>
     <p>
       Yatzé! is not affiliated with Hasbro's Yahtzee.
     </p>
   </description>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>A roll pours from the cup</caption>
+      <image>https://raw.githubusercontent.com/scott8420/yatze/main/screenshots/pour.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Hints: what to keep, which box to take</caption>
+      <image>https://raw.githubusercontent.com/scott8420/yatze/main/screenshots/hints.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A Yatzé</caption>
+      <image>https://raw.githubusercontent.com/scott8420/yatze/main/screenshots/yatze.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>High scores and your games over time</caption>
+      <image>https://raw.githubusercontent.com/scott8420/yatze/main/screenshots/standings.png</image>
+    </screenshot>
+  </screenshots>
 
   <launchable type="desktop-id">io.github.scott8420.Yatze.desktop</launchable>
   <provides><binary>yatze</binary></provides>
@@ -60,6 +81,24 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.1.0" date="2026-10-21">
+      <description><p>A quicker pace for computer players; the window remembers its size; screen-reader support.</p></description>
+    </release>
+    <release version="1.0.0" date="2026-10-21">
+      <description><p>First release: the full game, computer players, hints, 3D dice with sound, high scores and your record over time.</p></description>
+    </release>
+    <release version="0.14.0" date="2026-10-21">
+      <description><p>The logo; whose turn it is; scores fly into their boxes.</p></description>
+    </release>
+    <release version="0.12.0" date="2026-10-21">
+      <description><p>A Yatzé gets a cheer; so does the end of the game. A sound button.</p></description>
+    </release>
+    <release version="0.11.0" date="2026-10-21">
+      <description><p>The dice cup, and real cast shadows.</p></description>
+    </release>
+    <release version="0.9.0" date="2026-10-21">
+      <description><p>Dice sounds, and a wooden tray around the table.</p></description>
+    </release>
     <release version="0.7.0" date="2026-10-21">
       <description><p>Physics dice, computer players, hints and high scores.</p></description>
     </release>

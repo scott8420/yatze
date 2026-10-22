@@ -9,6 +9,7 @@
 #include "gfx/DieFaces.hpp"
 #include "gfx/Mesh.hpp"
 #include "gfx/Orbit.hpp"
+#include "gfx/Sound.hpp"
 #include "gfx/Take.hpp"
 #include "model/Computer.hpp"
 #include "model/Drawers.hpp"
@@ -20,6 +21,7 @@
 #include "model/Settings.hpp"
 #include "model/Stats.hpp"
 
+#include <cstring>
 #include <fstream>
 
 #include <chrono>
@@ -494,6 +496,13 @@ int main() {
         std::filesystem::remove_all(dir);
     }
 
+    std::cout << "[words]\n";
+    check("words: the dice for a screen reader",
+          model::dice_words({3, 5, 5, 6, 2}, {false, true, true, false, false}) == "Dice: 3, 5, 5, 6, 2. Holding dice 2, 3." &&
+          model::dice_words({1, 1, 1, 1, 1}, {true, false, false, false, false}) == "Dice: 1, 1, 1, 1, 1. Holding die 1." &&
+          model::dice_words({4, 2, 6, 1, 3}, {}) == "Dice: 4, 2, 6, 1, 3." &&
+          model::dice_words({0, 0, 0, 0, 0}, {}) == "Dice: not rolled yet");
+
     std::cout << "[settings]\n";
     {
         namespace st = model::settings;
@@ -504,6 +513,23 @@ int main() {
               st::load(file).dice == st::DiceStyle::Ivory);
         { std::ofstream bad(file); bad << R"({"version":1,"dice":"plaid"})"; }
         check("settings: an unknown dice style keeps the default", st::load(file).dice == st::DiceStyle::Red);
+        check("settings: sound is on by default", st::Settings{}.sound && st::load(file).sound);
+        check("settings: sound off saves and comes back (dice kept)",
+              st::save(file, {st::DiceStyle::Ivory, false}) && !st::load(file).sound &&
+              st::load(file).dice == st::DiceStyle::Ivory);
+        { std::ofstream bad(file); bad << R"({"version":1,"dice":"red","sound":"loud"})"; }
+        check("settings: a bad sound value keeps the default", st::load(file).sound);
+        {
+            st::Settings s;
+            check("settings: the computer's pace is Watch by default, the window 920 x 760",
+                  s.pace == st::Pace::Watch && s.width == 920 && s.height == 760 && !s.maximized);
+            s.pace = st::Pace::Quick; s.width = 1300; s.height = 900; s.maximized = true;
+            check("settings: pace and the window save and come back", st::save(file, s) && st::load(file) == s);
+            { std::ofstream bad(file); bad << R"({"version":1,"pace":"warp","window":{"width":12,"height":900000}})"; }
+            const auto b = st::load(file);
+            check("settings: a bad pace or an absurd window keeps the defaults",
+                  b.pace == st::Pace::Watch && b.width == 920 && b.height == 760);
+        }
         std::filesystem::remove_all(std::filesystem::path(file).parent_path());
     }
 
@@ -562,6 +588,23 @@ int main() {
         check("stats: history is capped", big.games().size() == sx::History::kMax);
         big.clear();
         check("stats: clear forgets every game", big.games().empty() && big.top().empty() && big.players().empty());
+        {   // s015: a player over time.
+            sx::History t;
+            const int totals[] = {150, 200, 250, 300, 180, 220, 260, 240, 210, 230, 270, 190};
+            int k = 0;
+            for (int v : totals)
+                t.add({"2026-10-" + std::to_string(10 + k++), {{"Ann", model::Seat::Human, model::Level::Medium, v, v > 250 ? 1 : 0, v >= 220},
+                                                               {"Bot", model::Seat::Computer, model::Level::Hard, 240, 0, true}}});
+            const auto tr = t.trend("Ann");
+            double last10 = 0;
+            for (int i = 2; i < 12; ++i) last10 += totals[i];
+            check("stats: a trend keeps every total, in the order played",
+                  tr.totals == std::vector<int>(std::begin(totals), std::end(totals)) && tr.games == 12);
+            check("stats: trend -- best, average, the last ten, Yatzes, bonus rate",
+                  tr.best == 300 && std::fabs(tr.average - 225.0) < 1e-9 && std::fabs(tr.recent - last10 / 10) < 1e-9 &&
+                  tr.yatzes == 3 && std::fabs(tr.bonus_rate - 7.0 / 12) < 1e-9);
+            check("stats: nobody's trend is empty", t.trend("Nobody").games == 0 && t.trend("Nobody").recent == 0);
+        }
         std::filesystem::remove_all(std::filesystem::path(file).parent_path());
     }
 
@@ -594,6 +637,15 @@ int main() {
     {
         namespace gfx = yatze::gfx;
         int wrong_face = 0, moved_held = 0, overlap = 0, off_table = 0, not_flat = 0, cropped = 0;
+        int cup_over_rail = 0, cup_outside = 0, cup_cuts_held = 0, cup_in_felt = 0, cup_lingers = 0, cup_track = 0;
+        // A point against the cup (a solid cylinder): radial / axial distance outside it.
+        auto cup_gap = [](const gfx::CupPose& c, const gfx::Vec3& p) {
+            const gfx::Vec3 a = c.axis(), d = p - c.pos;
+            const float ax = gfx::dot(d, a);
+            const float rad = gfx::length(d - a * ax);
+            const float or_ = std::max(0.0f, rad - gfx::kCupRadius), oa = std::max(0.0f, std::fabs(ax) - gfx::kCupHeight / 2);
+            return std::pair{rad, std::sqrt(or_ * or_ + oa * oa)};
+        };
         double tmin = 1e9, tmax = 0, tsum = 0;
         const int takes = 300;
         std::uint64_t rs = 777;
@@ -612,6 +664,27 @@ int main() {
             const double d = take.duration();
             tmin = std::min(tmin, d); tmax = std::max(tmax, d); tsum += d;
             const auto& end = take.frames.back();
+            // The cup: one pose a frame; the rolled dice leave from inside it; it
+            // never cuts a held die or sinks into the felt; it is gone by the end.
+            if (take.cups.size() != take.frames.size() || take.spill < 0.4 || take.spill > 0.7) ++cup_track;
+            if (!take.cups.empty() && take.cups.back().shown) ++cup_lingers;
+            const std::size_t sf = std::size_t(std::lround(take.spill * gfx::Take::kFps));
+            for (int i = 0; i < 5 && sf < take.cups.size(); ++i)
+                if (!shot.held[i] && cup_gap(take.cups[sf], take.frames[sf][i].pos).second > 0.45f) { ++cup_outside; break; }
+            for (std::size_t f = 0; f < take.cups.size(); ++f) {
+                const auto& c = take.cups[f];
+                if (!c.shown) continue;
+                const float ay = std::fabs(c.axis().y);
+                const float low = c.pos.y - gfx::kCupHeight / 2 * ay - gfx::kCupRadius * std::sqrt(std::max(0.0f, 1 - ay * ay));
+                if (low < -0.3f) { ++cup_in_felt; break; }
+                // Its reach across the table (a bound): past a side rail, it must be above it.
+                const float reach = std::fabs(c.pos.x) + gfx::kCupHeight / 2 * std::fabs(c.axis().x) + gfx::kCupRadius;
+                if (reach > gfx::kRailX && low < gfx::kSideRailHeight + 0.05f) { ++cup_over_rail; break; }
+                bool cut = false;
+                for (int i = 0; i < 5; ++i)
+                    if (shot.held[i] && cup_gap(c, take.frames[f][i].pos).second < 0.6f) cut = true;
+                if (cut) { ++cup_cuts_held; break; }
+            }
             for (int i = 0; i < 5; ++i) {
                 if (gfx::value_facing(end[i].rot, {0, 1, 0}) != shot.values[i]) ++wrong_face;
                 if (std::fabs(end[i].pos.y - 0.5f) > 1e-3f ||
@@ -652,7 +725,13 @@ int main() {
         check("take: no two dice end inside each other", overlap == 0, std::to_string(overlap));
         check("take: the dice stay on the table", off_table == 0, std::to_string(off_table));
         check("take: the camera never crops a die (every frame)", cropped == 0, std::to_string(cropped) + " takes cropped");
-        check("take: lengths vary (1..5.5 s), none instant, none endless", tmin > 1.0 && tmax < 5.5 && tmax - tmin > 0.8, buf);
+        check("take: lengths vary (1..6 s with the cup), none instant, none endless", tmin > 1.0 && tmax < 6.0 && tmax - tmin > 0.8, buf);
+        check("cup: a pose every frame, the spill 0.4..0.7 s in", cup_track == 0, std::to_string(cup_track));
+        check("cup: the rolled dice leave from inside it", cup_outside == 0, std::to_string(cup_outside) + " takes");
+        check("cup: never cuts through a held die", cup_cuts_held == 0, std::to_string(cup_cuts_held) + " takes");
+        check("cup: clears the side rails as it leaves", cup_over_rail == 0, std::to_string(cup_over_rail) + " takes");
+        check("cup: never sinks into the felt", cup_in_felt == 0, std::to_string(cup_in_felt) + " takes");
+        check("cup: lifted out of the shot before the dice rest", cup_lingers == 0, std::to_string(cup_lingers) + " takes");
         gfx::Shot a;
         a.values = {1, 2, 3, 4, 5};
         a.seed = 99;
@@ -665,6 +744,81 @@ int main() {
         a.seed = 100;
         check("take: another seed, another take", gfx::shoot(a).frames.size() != t1.frames.size() ||
               gfx::length(gfx::shoot(a).frames[30][0].pos - t1.frames[30][0].pos) > 0.01f);
+    }
+
+    std::cout << "[sound]\n";
+    {
+        namespace gfx = yatze::gfx;
+        gfx::Shot shot;
+        shot.values = {6, 5, 4, 3, 2};
+        shot.seed = 2024;
+        const auto take = gfx::shoot(shot);
+        bool ordered = !take.contacts.empty(), inside = true;
+        int kinds[3] = {0, 0, 0};
+        for (std::size_t i = 0; i < take.contacts.size(); ++i) {
+            const auto& c = take.contacts[i];
+            if (i && c.t < take.contacts[i - 1].t) ordered = false;
+            if (c.t < 0 || c.t > take.duration() || c.speed < 0.8f) inside = false;
+            ++kinds[int(c.kind)];
+        }
+        check("sound: the take hears its knocks, in time order", ordered, std::to_string(take.contacts.size()) + " knocks");
+        check("sound: every knock inside the take, and audible", inside);
+        check("sound: dice land on the felt (felt knocks heard)", kinds[0] > 0,
+              "felt " + std::to_string(kinds[0]) + ", die " + std::to_string(kinds[1]) + ", rail " + std::to_string(kinds[2]));
+        // Over many takes, dice knock dice too.
+        int die_knocks = 0;
+        for (int k = 0; k < 40; ++k) { gfx::Shot s2; s2.seed = 500 + std::uint64_t(k); s2.values = {1, 2, 3, 4, 5};
+            for (const auto& c : gfx::shoot(s2).contacts) die_knocks += c.kind == gfx::Contact::Kind::Die; }
+        check("sound: dice knock each other in some takes", die_knocks > 0, std::to_string(die_knocks));
+
+        const auto a = gfx::mix_take(take, shot.fov, shot.aspect, 7);
+        int peak = 0;
+        for (auto v : a.pcm) peak = std::max(peak, std::abs(int(v)));
+        check("sound: the clip covers the take, plus a tail", a.seconds() >= take.duration() + 0.3, std::to_string(a.seconds()));
+        check("sound: audible, and the limiter keeps it from clipping", peak > 2000 && peak < 32000, std::to_string(peak));
+        // The last 0.1 s is silent: every knock has died away.
+        int tail = 0;
+        for (std::size_t i = a.pcm.size() - std::size_t(0.1 * gfx::Audio::kRate) * 2; i < a.pcm.size(); ++i)
+            tail = std::max(tail, std::abs(int(a.pcm[i])));
+        check("sound: it ends in silence", tail < 50, std::to_string(tail));
+        {   // The cup rattles before the spill (and no table knock is heard then).
+            double before = 0;
+            for (std::size_t i = 0; i < std::size_t(take.spill * gfx::Audio::kRate) * 2; ++i) before += std::fabs(double(a.pcm[i]));
+            bool early = false;
+            for (const auto& c : take.contacts) if (c.t < take.spill) early = true;
+            check("sound: the cup rattles before the spill, the table is quiet till then", before > 1e5 && !early);
+        }
+        check("sound: the same take, the same sound", gfx::mix_take(take, shot.fov, shot.aspect, 7).pcm == a.pcm);
+
+        // Panning: one knock to the camera's left is louder in the left ear.
+        const gfx::CamPose cam{{0, 6, 8}, {0, 0.5f, 0}};
+        const auto knock_at = [&](float x) {
+            const std::vector<gfx::Contact> one = {{0.05, {x, 0.5f, 0}, 6.0f, gfx::Contact::Kind::Die, 0}};
+            return gfx::mix(one, [&](double) { return cam; }, shot.fov, 1.6f, 0.2, 3);
+        };
+        auto energy = [](const gfx::Audio& au, int ch) { double e = 0; for (std::size_t i = std::size_t(ch); i < au.pcm.size(); i += 2) e += double(au.pcm[i]) * au.pcm[i]; return e; };
+        const auto l = knock_at(-3.0f), rr = knock_at(3.0f), mid = knock_at(0.0f);
+        check("sound: a knock on the left is louder on the left", energy(l, 0) > 2 * energy(l, 1));
+        check("sound: a knock on the right is louder on the right", energy(rr, 1) > 2 * energy(rr, 0));
+        check("sound: a knock in the middle is centred", std::fabs(energy(mid, 0) - energy(mid, 1)) < 0.05 * energy(mid, 0));
+
+        const auto w = gfx::wav(a);
+        // s012: the cheers.
+        for (auto kind : {gfx::Cheer::Yatze, gfx::Cheer::GameOver}) {
+            const auto c = gfx::chime(kind);
+            int pk = 0, end = 0;
+            for (auto v : c.pcm) pk = std::max(pk, std::abs(int(v)));
+            for (std::size_t i = c.pcm.size() - std::size_t(0.05 * gfx::Audio::kRate) * 2; i < c.pcm.size(); ++i)
+                end = std::max(end, std::abs(int(c.pcm[i])));
+            const char* nm = kind == gfx::Cheer::Yatze ? "Yatze" : "game over";
+            check(std::string("sound: the ") + nm + " chime is heard, never clips, ends quiet",
+                  pk > 6000 && pk < 32000 && end < 200 && c.seconds() > 1.0 && c.seconds() < 3.0,
+                  "peak " + std::to_string(pk) + ", tail " + std::to_string(end) + ", " + std::to_string(c.seconds()) + " s");
+        }
+        check("sound: a well-formed WAV (RIFF / WAVE / 44.1 kHz stereo 16-bit)",
+              w.size() == 44 + a.pcm.size() * 2 && std::memcmp(w.data(), "RIFF", 4) == 0 &&
+              std::memcmp(w.data() + 8, "WAVEfmt ", 8) == 0 && w[22] == 2 && w[34] == 16 &&
+              (w[24] | (w[25] << 8) | (w[26] << 16)) == 44100);
     }
 
     std::cout << "[3d: the orb]\n";

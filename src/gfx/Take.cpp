@@ -63,7 +63,8 @@ const std::array<Vec3, 8>& corners() {
 
 // One contact, resolved as an impulse (normal + Coulomb friction) on A, and
 // the opposite on B (if B is a body that moves).
-void impulse(Body& a, Body* b, const Vec3& p, const Vec3& n, float e, float mu) {
+// Returns the impact speed it resolved (0 if the bodies were already parting).
+float impulse(Body& a, Body* b, const Vec3& p, const Vec3& n, float e, float mu) {
     const Vec3 ra = p - a.x;
     const Vec3 rb = b ? p - b->x : Vec3{};
     auto vel = [&] {
@@ -79,7 +80,7 @@ void impulse(Body& a, Body* b, const Vec3& p, const Vec3& n, float e, float mu) 
     };
     const Vec3 vr = vel();
     const float vn = dot(vr, n);
-    if (vn >= 0) return;
+    if (vn >= 0) return 0.0f;
     const float rest = vn < -0.9f ? e : 0.0f;          // no jitter at rest
     const float j = -(1 + rest) * vn / k_of(n);
     auto apply = [&](const Vec3& imp) {
@@ -95,17 +96,38 @@ void impulse(Body& a, Body* b, const Vec3& p, const Vec3& n, float e, float mu) 
     const Vec3 vr2 = vel();
     Vec3 t = vr2 - n * dot(vr2, n);
     const float tl = length(t);
-    if (tl < 1e-6f) return;
+    if (tl < 1e-6f) return -vn;
     t = t * (1.0f / tl);
     float jt = -dot(vr2, t) / k_of(t);
     jt = std::clamp(jt, -mu * j, mu * j);
     apply(t * jt);
+    return -vn;
 }
 
 // A plane the dice cannot pass: the felt (n = +y) and the four rails.
 struct Plane { Vec3 n; float d; float e, mu; };   // inside where dot(n, p) >= d
 
-void step(std::vector<Body>& dice) {
+// Who knocked whom, and when, so one bump is one sound (several corners of a
+// die touch at once; both dice of a pair see the same knock).
+struct Ears {
+    std::vector<Contact>* out = nullptr;
+    double t = 0;
+    std::array<std::array<double, 3>, 5> last{};       // per die, per kind (felt, die, rail)
+    std::array<std::array<double, 5>, 5> pair{};       // per pair of dice
+    static constexpr float  kAudible = 0.8f;           // slower touches make no sound
+    static constexpr double kGap = 0.06;               // one knock per this long
+    Ears() { for (auto& r : last) r.fill(-1); for (auto& r : pair) r.fill(-1); }
+    void hear(int die, Contact::Kind k, const Vec3& p, float speed, int other = -1) {
+        if (!out || speed < kAudible) return;
+        double& when = other >= 0 ? pair[std::min(die, other)][std::max(die, other)]
+                                  : last[die][int(k)];
+        if (t - when < kGap) return;
+        when = t;
+        out->push_back({t, p, speed, k, die});
+    }
+};
+
+void step(std::vector<Body>& dice, Ears& ears) {
     const Plane planes[] = {
         {{0, 1, 0}, 0.0f, kRestFelt, kMuFelt},
         {{1, 0, 0}, -kRailX, 0.4f, 0.2f},  {{-1, 0, 0}, -kRailX, 0.4f, 0.2f},
@@ -123,7 +145,10 @@ void step(std::vector<Body>& dice) {
                 for (const auto& pl : planes) {
                     const float pen = pl.d - dot(pl.n, p);
                     if (pen <= 0) continue;
-                    impulse(b, nullptr, p, pl.n, pl.e, pl.mu);
+                    const float hit = impulse(b, nullptr, p, pl.n, pl.e, pl.mu);
+                    // The open front edge makes no sound (nothing is drawn there).
+                    if (it == 0 && pl.n.z > -0.5f)
+                        ears.hear(int(&b - dice.data()), pl.n.y > 0.5f ? Contact::Kind::Felt : Contact::Kind::Rail, p, hit);
                     if (it == kIters - 1) b.x = b.x + pl.n * (pen * 0.6f);   // push out
                 }
             }
@@ -147,7 +172,8 @@ void step(std::vector<Body>& dice) {
                     else if (ay >= az)        { nl = {0, l.y > 0 ? 1.0f : -1.0f, 0}; pen = 0.5f - ay; }
                     else                      { nl = {0, 0, l.z > 0 ? 1.0f : -1.0f}; pen = 0.5f - az; }
                     const Vec3 n = b.q.rotate(nl);   // out of B, toward A
-                    impulse(a, &b, p, n, kRestDice, kMuDice);
+                    const float hit = impulse(a, &b, p, n, kRestDice, kMuDice);
+                    if (it == 0) ears.hear(int(i), Contact::Kind::Die, p, hit, int(k));
                     if (it == kIters - 1) {
                         const float share = b.fixed ? 1.0f : 0.5f;
                         a.x = a.x + n * (pen * 0.5f * share);
@@ -284,6 +310,15 @@ CamPose Take::cam_at(double t) const {
     return {lerp(cams[i].eye, cams[j].eye, u), lerp(cams[i].at, cams[j].at, u)};
 }
 
+CupPose Take::cup_at(double t) const {
+    if (cups.empty()) return {{}, {}, false};
+    const double f = std::clamp(t * kFps, 0.0, double(cups.size() - 1));
+    const std::size_t i = std::size_t(f);
+    const std::size_t j = std::min(i + 1, cups.size() - 1);
+    const float u = float(f - double(i));
+    return {lerp(cups[i].pos, cups[j].pos, u), slerp(cups[i].rot, cups[j].rot, u), cups[i].shown && cups[j].shown};
+}
+
 // ── the shoot ───────────────────────────────────────────────────────────────
 Take shoot(const Shot& shot) {
     Rng r{shot.seed ? shot.seed : 1};
@@ -292,7 +327,10 @@ Take shoot(const Shot& shot) {
     // 1. The throw: the cup at your side, a little left or right; the dice
     //    in a loose clump, tossed toward the far side, spinning.
     std::vector<Body> dice(5);
-    const Vec3 cup{r.range(-1.6f, 1.6f), r.range(1.5f, 2.1f), r.range(0.15f, 0.55f)};
+    // With dice held at your edge the cup pours from a little further in, so
+    // it clears them (s010: the cup is drawn now).
+    const bool any_held = std::any_of(shot.held.begin(), shot.held.end(), [](bool h) { return h; });
+    const Vec3 cup{r.range(-1.3f, 1.3f), r.range(1.2f, 1.6f), r.range(0.15f, 0.55f) - (any_held ? 0.9f : 0.0f)};
     const float power = r.range(0.75f, 1.2f);                       // soft .. hard throws
     const float heading = r.range(-0.35f, 0.35f);                   // a little across the table
     // A loose clump, as they spill from the cup: centres at least 1.75 apart
@@ -313,8 +351,10 @@ Take shoot(const Shot& shot) {
         const Vec3 jitter{r.range(-0.03f, 0.03f), r.range(-0.03f, 0.03f), r.range(-0.03f, 0.03f)};
         b.x = cup + clump[slot++] + jitter;
         b.q = normalize(Quat{r.range(-1, 1), r.range(-1, 1), r.range(-1, 1), r.range(-1, 1)});
-        const float speed = power * r.range(6.0f, 8.5f);
-        b.v = Vec3{std::sin(heading) * speed + r.range(-0.8f, 0.8f), r.range(2.0f, 4.0f),
+        // Tossed onto the felt to tumble into the back wall, not thrown at it
+        // (s009: harder throws hit the wall in flight, high above any rail).
+        const float speed = power * r.range(4.2f, 6.0f);
+        b.v = Vec3{std::sin(heading) * speed + r.range(-0.8f, 0.8f), r.range(0.8f, 2.2f),
                    -std::cos(heading) * speed + r.range(-0.6f, 0.6f)};
         b.ref_x = b.x;
         b.ref_q = b.q;
@@ -329,8 +369,11 @@ Take shoot(const Shot& shot) {
         take.frames.push_back(f);
     };
     record();
+    Ears ears;
+    ears.out = &take.contacts;
     for (int s = 1; s < int(kMaxTime / kDt); ++s) {
-        step(dice);
+        ears.t = double(s) * kDt;
+        step(dice, ears);
         if (s % per_frame == 0) record();
         const bool all_still = std::all_of(dice.begin(), dice.end(), [](const Body& b) { return b.fixed; });
         if (all_still && s % per_frame == 0) break;
@@ -386,7 +429,60 @@ Take shoot(const Shot& shot) {
         for (auto& f : take.frames) f[i].rot = normalize(f[i].rot * relabel);
     }
 
-    // 5. The camera, planned over the whole take.
+    // 5. The cup (s010). A lead-in is put in front of the physics: the cup at
+    //    your side, shaken and tipping, the dice in it (the first frame held);
+    //    at the spill it points at the table, mouth around the clump, and the
+    //    physics begins; then it follows through and lifts up out of the shot.
+    {
+        // The cup is placed on the whole clump (however many dice roll), so
+        // where it pours does not depend on what you held.
+        Vec3 g{};
+        for (const auto& c : clump) g = g + c;
+        g = cup + g * 0.2f;
+        const float lead = r.range(0.45f, 0.65f);
+        const int lead_n = int(std::lround(lead * Take::kFps));
+        take.spill = double(lead_n) / Take::kFps;
+        const auto first = take.frames.front();
+        take.frames.insert(take.frames.begin(), std::size_t(lead_n), first);
+        for (auto& c : take.contacts) c.t += take.spill;
+
+        const Vec3 fwd{std::sin(heading), 0, -std::cos(heading)};       // toward the far side
+        auto axis = [&](float tilt) { return normalize(Vec3{0, std::cos(tilt), 0} + fwd * std::sin(tilt)); };
+        const float tilt_spill = r.range(1.62f, 1.78f);                  // mouth a little below level
+        const Vec3 centre = g - axis(tilt_spill) * 0.35f + Vec3{0, 0.4f, 0};
+        const Vec3 mouth_spill = centre + axis(tilt_spill) * (kCupHeight / 2);
+        const float shake_hz = r.range(7.5f, 10.0f);
+        const float lift = 0.85f;                                         // the follow-through, seconds
+        take.cups.resize(take.frames.size());
+        for (std::size_t f = 0; f < take.frames.size(); ++f) {
+            const float t = float(double(f) / Take::kFps);
+            CupPose& p = take.cups[f];
+            p.shown = true;
+            if (t < float(take.spill)) {
+                // Poured, not swung: the MOUTH comes down from above toward the
+                // spot while the cup tips past level (the base rises behind it),
+                // so it stays clear of the dice held at your edge.
+                const float u = t / float(take.spill), v = 1.0f - u * u;
+                const float tilt = 0.9f + (tilt_spill - 0.9f) * u;
+                const float shake = std::sin(t * shake_hz * 6.2831853f) * 0.09f * (1.0f - u);
+                const Vec3 mouth = mouth_spill + Vec3{0, 2.5f, 0.0f} * v + Vec3{shake, shake * 0.4f, 0};
+                p.pos = mouth - axis(tilt) * (kCupHeight / 2);
+                p.rot = from_to({0, 1, 0}, axis(tilt));
+            } else {
+                const float u = std::min(1.0f, (t - float(take.spill)) / lift);
+                const float e = u * u * (3 - 2 * u);
+                // Out sideways (toward its own side of the table), not up --
+                // up is toward a high camera and would fill the shot.
+                // It rises first (quickly) so it clears the side rail.
+                const float rise = 1.0f - (1.0f - u) * (1.0f - u);
+                p.pos = centre + Vec3{(cup.x >= 0 ? 1.0f : -1.0f) * 8.0f * e, 2.6f * rise, 1.0f * e};
+                p.rot = from_to({0, 1, 0}, axis(tilt_spill + 0.35f * e));
+                p.shown = u < 1.0f;
+            }
+        }
+    }
+
+    // 6. The camera, planned over the whole take.
     const std::size_t n = take.frames.size();
     std::vector<Vec3> centre(n);
     std::vector<float> spread(n);
@@ -396,6 +492,8 @@ Take shoot(const Shot& shot) {
         c = c * 0.2f;
         float rad = 0;
         for (const auto& d : take.frames[f]) rad = std::max(rad, length(d.pos - c) + 0.75f);
+        if (double(f) / Take::kFps < take.spill + 0.1)                 // the cup in the shot too
+            rad = std::max(rad, length(take.cups[f].pos - c) + kCupRadius + 0.4f);
         centre[f] = c;
         spread[f] = rad;
     }

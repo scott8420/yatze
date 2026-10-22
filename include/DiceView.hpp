@@ -1,10 +1,14 @@
 #pragma once
 #include "gfx/Math.hpp"
 #include "gfx/Orbit.hpp"
+#include "gfx/Sound.hpp"
 #include "gfx/Take.hpp"
 #include "model/Rules.hpp"
 
 #include <gtkmm/glarea.h>
+#include <gtkmm/mediafile.h>
+
+#include <string>
 #include <sigc++/signal.h>
 
 #include <array>
@@ -51,6 +55,14 @@ public:
     // presented row re-centres in what is still visible.
     void set_left_inset(float px);
     void set_right_inset(float px);                      // the same for a drawer over the right edge
+    void set_sound(bool on);
+    // s017: how fast the table plays (1 = as filmed). Set before set() for a
+    // roll: the take, its sound, the beat after and the glide all follow it.
+    void set_rate(double rate) { m_rate = rate > 0 ? rate : 1.0; }
+    // s012: the dice cheer -- hop in a wave, spinning in place (result still
+    // up), gold under them, and a chime. Yatze: two waves; game over: three.
+    void celebrate(gfx::Cheer kind);
+    bool celebrating() const { return m_cheer_t0 > -1e8; }                             // s009: the take's clatter
     void set_red(bool red);                              // red dice / white pips, else ivory / black
 
     // ── your own view (s008): the orb drives these ──────────────────────────
@@ -92,7 +104,9 @@ private:
     // Layout (world units: a die is 1; the felt is y = 0; you sit toward +Z).
     Pose present_pose(int i) const;
     Cam  present_cam() const;
-    void plan_roll(std::uint64_t seed);                  // scatter + the seated viewpoint
+    void plan_roll(std::uint64_t seed);
+    void play_sound();                                   // the mixed clip, from the take's first frame
+    static double speed_scale();                         // YATZE_SPEED                  // scatter + the seated viewpoint
     void update_poses(double t, double dt);              // where everything is at time t
     gfx::Mat4 view_proj(const Cam& c, float aspect) const;
     int  pick(double x, double y) const;
@@ -108,6 +122,8 @@ private:
     gfx::Take            m_take;                          // this roll, filmed (s005)
     bool                 m_settled_pending = false;
     double               m_phase_t0 = 0, m_now = 0, m_last = -1;
+    double               m_clock = 0;          // the table's own time: real time x YATZE_SPEED x m_rate
+    double               m_rate = 1.0;
     std::array<Pose, 5>  m_pose{}, m_from{}, m_scatter{};
     Cam                  m_cam{}, m_roll_cam{};
     std::array<float, 5> m_lift{};                        // held dice step forward smoothly
@@ -124,11 +140,33 @@ private:
     bool                 m_user_view = false;             // the orb has been used (s008)
     gfx::Orbit           m_orbit{};                       // ... and where it put you
 
+    // The take's sound (s009): mixed when the take is shot, written to a
+    // small WAV in the runtime dir, started on the take's first frame.
+    bool                           m_sound = true;
+    bool                           m_sound_ready = false;
+    std::string                    m_sound_path;
+    Glib::RefPtr<Gtk::MediaFile>   m_player;
+    Glib::RefPtr<Gtk::MediaFile>   m_cheer_player;
+    double                         m_cheer_t0 = -1e9;   // tick clock; -1e9 = none; NaN-free "pending" = -1e8
+    bool                           m_cheer_pending = false;
+    int                            m_cheer_waves = 0;
+    float                          m_cheer_height = 0.8f;
+    Pose cheer_pose(int i, const Pose& p) const;        // a die's pose with the cheer's hop and spin
+
     // GL objects.
     bool         m_failed = false;
     unsigned     m_die_prog = 0, m_flat_prog = 0;
     unsigned     m_die_vao = 0, m_die_vbo = 0, m_die_ibo = 0, m_quad_vao = 0, m_quad_vbo = 0;
     int          m_die_count = 0;
+    // The tray (s009): back wall, left rail, right rail -- one buffer.
+    unsigned     m_tray_vao = 0, m_tray_vbo = 0, m_tray_ibo = 0;
+    int          m_tray_first[3] = {}, m_tray_count[3] = {};
+    unsigned     m_depth_prog = 0, m_shadow_fbo = 0, m_shadow_tex = 0;   // s011
+    bool         m_shadows = false;     // the depth map works on this GL
+    unsigned     m_cup_vao = 0, m_cup_vbo = 0, m_cup_ibo = 0;   // s010
+    int          m_cup_count = 0;
+    gfx::CupPose m_cup{};               // this frame's cup (shown only in the take)
+    bool         m_in_cup = false;      // the rolled dice are still in it (before the spill)
     unsigned     m_fbo = 0, m_fbo_color = 0, m_fbo_depth = 0;
     int          m_fbo_w = 0, m_fbo_h = 0, m_samples = 4;
 

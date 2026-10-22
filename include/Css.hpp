@@ -44,6 +44,18 @@ inline const char* YATZE_CSS = R"CSS(
     .drawer-panel.right { border-left: 1px solid alpha(currentColor, 0.15);
                           box-shadow: -2px 0 10px alpha(black, 0.25); }
 
+    /* s014: a score flies from the dice to its box, which flashes amber. */
+    label.fly-score { font-size: 26px; font-weight: 800; color: #ffb238;
+                      text-shadow: 0 1px 3px alpha(black, 0.7); }
+    label.fly-score.nothing { color: alpha(white, 0.75); }
+    label.score-cell { border-radius: 6px; transition: background-color 700ms ease-out; }
+    label.score-cell.just-scored { background-color: alpha(#ffb238, 0.55); transition: none; }
+
+    /* s013: whose turn -- a dark card over the table. */
+    .turn-card { background-color: alpha(black, 0.62); color: white; border-radius: 18px;
+                 padding: 16px 36px; }
+    .turn-card .turn-info { color: alpha(white, 0.88); font-size: 1.15em; }
+
     /* The dice: no button chrome -- the drawing is the die. */
     button.die { padding: 2px; background: none; box-shadow: none; }
     button.die:focus-visible { outline: 2px solid alpha(currentColor, 0.5); }

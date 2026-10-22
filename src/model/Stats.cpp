@@ -70,6 +70,29 @@ std::vector<PlayerStats> History::players() const {
     return out;
 }
 
+Trend History::trend(const std::string& who) const {
+    Trend t;
+    for (const auto& g : m_games)
+        for (const auto& s : g.seats) {
+            if (key(s) != who) continue;
+            t.totals.push_back(s.total);
+            t.best = std::max(t.best, s.total);
+            t.yatzes += s.yatzes;
+            if (s.bonus) ++t.bonuses;
+        }
+    t.games = int(t.totals.size());
+    if (t.games == 0) return t;
+    double sum = 0;
+    for (int v : t.totals) sum += v;
+    t.average = sum / t.games;
+    const int n = std::min(t.games, Trend::kRecent);
+    double rs = 0;
+    for (int i = t.games - n; i < t.games; ++i) rs += t.totals[std::size_t(i)];
+    t.recent = rs / n;
+    t.bonus_rate = double(t.bonuses) / t.games;
+    return t;
+}
+
 std::vector<HighScore> History::top(std::size_t n) const {
     std::vector<HighScore> all;
     for (const auto& g : m_games)

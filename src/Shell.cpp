@@ -14,12 +14,18 @@ Shell::Shell()
     : m_logo_button("shell.logo_button"),
       m_new_button("shell.new_button"),
       m_menu_button("shell.menu_button"),
+      m_sound_button("shell.sound_button"),
       m_content("shell.content", Gtk::Orientation::HORIZONTAL),
       m_play("play", Gtk::Orientation::VERTICAL, 18),
       m_status("play.status"),
       m_dice_stack("play.dice_stack"),
       m_table("play.table"),
       m_reset_view("play.reset_view"),
+      m_turn_reveal("play.turn_reveal"),
+      m_turn_card("play.turn_card", Gtk::Orientation::VERTICAL, 4),
+      m_turn_name("play.turn_name"),
+      m_turn_info("play.turn_info"),
+      m_fly("play.fly"),
       m_roll("play.roll"),
       m_said("play.said"),
       m_overlay("drawers.overlay"),
@@ -43,6 +49,10 @@ void Shell::build_ui() {
     m_history.load(history_file());
     m_settings = model::settings::load(settings_file());
     m_act_dice->change_state(Glib::ustring(model::settings::key(m_settings.dice)));
+    m_act_sound->change_state(m_settings.sound);
+    m_act_pace->change_state(Glib::ustring(model::settings::key(m_settings.pace)));
+    set_default_size(m_settings.width, m_settings.height);
+    if (m_settings.maximized) maximize();
     apply_settings();
 
     // The players from last time (Scott, s004); the first time ever, you against

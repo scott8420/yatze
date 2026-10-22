@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yatze VERSION 0.8.0 LANGUAGES C CXX)
+project(yatze VERSION 1.1.0 LANGUAGES C CXX)
 
 # ── Application identity (one place; as Sudoku) ─────────────────────────────
 # The freedesktop app ID, from the project's GitHub home. The code gets it (and
@@ -47,9 +47,9 @@ target_link_libraries(yatze_model PUBLIC Threads::Threads)
 # ── yatze_gfx -- the dice table's geometry and the filmed take (physics +
 # planned camera). GTK-free and GL-free, so the selftest shoots takes
 # headless. Optimised in every build: a take is ~1500 physics steps.
-add_library(yatze_gfx STATIC src/gfx/Take.cpp)
+add_library(yatze_gfx STATIC src/gfx/Take.cpp src/gfx/Sound.cpp)
 target_include_directories(yatze_gfx PUBLIC include)
-set_source_files_properties(src/gfx/Take.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+set_source_files_properties(src/gfx/Take.cpp src/gfx/Sound.cpp PROPERTIES COMPILE_OPTIONS "-O2")
 
 # ── Headless selftest ────────────────────────────────────────────────────────
 add_executable(yatze_selftest src/model/selftest.cpp)

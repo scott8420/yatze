@@ -2,6 +2,7 @@
 #include "Log.hpp"
 #include "gfx/DieFaces.hpp"
 #include "gfx/Mesh.hpp"
+#include "gfx/Sound.hpp"
 #include "gfx/Take.hpp"
 
 #include <epoxy/gl.h>
@@ -10,7 +11,12 @@
 #include <gtkmm/eventcontrollermotion.h>
 #include <gtkmm/gestureclick.h>
 
+#include <glibmm/miscutils.h>
+
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <cmath>
 #include <string>
@@ -51,9 +57,39 @@ void main() {
 }
 )";
 
+// s011: cast shadows. The scene is drawn once from the light into a depth
+// map; the felt and every lit surface ask it "does anything stand between me
+// and the light?" -- 3x3 samples, each filtered by the hardware, for a soft edge.
+#define YATZE_SHADOW_GLSL \
+    "uniform sampler2DShadow u_shadow;\n" \
+    "uniform mat4 u_lvp;\n" \
+    "uniform float u_has_shadow;\n" \
+    "float lit_by_sun(vec3 w, float bias) {\n" \
+    "    if (u_has_shadow < 0.5) return 1.0;\n" \
+    "    vec4 p = u_lvp * vec4(w, 1.0);\n" \
+    "    vec3 s = p.xyz / p.w * 0.5 + 0.5;\n" \
+    "    if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return 1.0;\n" \
+    "    vec2 texel = 1.0 / vec2(textureSize(u_shadow, 0));\n" \
+    "    float sum = 0.0;\n" \
+    "    for (int y = -1; y <= 1; ++y)\n" \
+    "        for (int x = -1; x <= 1; ++x)\n" \
+    "            sum += texture(u_shadow, vec3(s.xy + vec2(x, y) * texel * 1.6, s.z - bias));\n" \
+    "    return sum / 9.0;\n" \
+    "}\n"
+
+const char* kDepthVS = R"(#version 330 core
+layout(location = 0) in vec3 a_pos;
+uniform mat4 u_model;
+uniform mat4 u_lvp;
+void main() { gl_Position = u_lvp * u_model * vec4(a_pos, 1.0); }
+)";
+const char* kDepthFS = R"(#version 330 core
+void main() {}
+)";
+
 // Pips from the face table (u_face, filled from gfx::face_normal -- the same
 // table the selftest checks): which value is on +X, -X, +Y, -Y, +Z, -Z.
-const char* kDieFS = R"(#version 330 core
+const char* kDieFS = "#version 330 core\n" YATZE_SHADOW_GLSL R"(
 in vec3 v_lpos; in vec3 v_lnrm; in vec3 v_wpos; in vec3 v_wnrm;
 uniform vec3  u_eye;
 uniform vec3  u_light;
@@ -62,6 +98,9 @@ uniform float u_blank;
 uniform vec3  u_body;
 uniform vec3  u_pip;
 uniform float u_gloss;
+uniform float u_wood;      // s009: 1 the tray (grain, no pips); s010: 2 the cup (leather)
+uniform float u_cup_h;
+uniform float u_alpha;
 out vec4 o_col;
 float pip(vec2 uv, vec2 c) {
     float d = length(uv - c), r = 0.20, aa = fwidth(d) * 1.2;
@@ -86,14 +125,37 @@ void main() {
     float p = (u_blank > 0.5) ? 0.0 : pips(u_face[idx], uv) * flatness;
 
     vec3 N = normalize(v_wnrm), L = normalize(u_light), V = normalize(u_eye - v_wpos);
+    float inside = 1.0;
+    if (u_wood > 1.5 && dot(N, V) < 0.0) { N = -N; inside = 0.45; }   // the cup is a thin shell
     vec3 H = normalize(L + V);
     vec3 base = mix(u_body, u_pip, p);
+    if (u_wood > 0.5) {
+        // Walnut: long grain along the rail, a few darker rings.
+        float along = (a.x >= a.z) ? v_wpos.z : v_wpos.x;
+        float g = sin(along * 3.1 + sin(v_wpos.y * 5.0 + along * 0.7) * 1.6) * 0.5 + 0.5;
+        float ring = smoothstep(0.82, 1.0, sin(along * 11.0 + v_wpos.y * 2.3) * 0.5 + 0.5);
+        base = u_body * (0.82 + 0.22 * g - 0.18 * ring);
+    }
     float diff = max(dot(N, L), 0.0);
+    if (u_wood > 1.5) {
+        // Leather: a fine pebble, darker toward the base; a row of stitches
+        // under the rim (outside only).
+        vec3 q = v_lpos * 23.0;
+        float pebble = fract(sin(dot(floor(q), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        float down = clamp((v_lpos.y + u_cup_h * 0.5) / u_cup_h, 0.0, 1.0);
+        base = u_body * (0.80 + 0.10 * pebble) * (0.80 + 0.25 * down);
+        float band = abs(v_lpos.y - (u_cup_h * 0.5 - 0.30));
+        float ang = atan(v_lpos.z, v_lpos.x) * 30.0;
+        float stitch = (1.0 - smoothstep(0.025, 0.04, band)) * step(0.45, fract(ang)) * step(0.9, inside);
+        base = mix(base, vec3(0.78, 0.66, 0.45), stitch * 0.85);
+        base *= inside;
+    }
     float fill = max(dot(N, normalize(vec3(-0.7, 0.35, 0.6))), 0.0) * 0.28;
     float rim  = pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.12;
     float spec = pow(max(dot(N, H), 0.0), 56.0) * (1.0 - p) * u_gloss;
-    vec3 col = base * (0.30 + 0.72 * diff + fill) + vec3(spec + rim);
-    o_col = vec4(col, 1.0);
+    float sun = lit_by_sun(v_wpos + N * 0.02, 0.0012);
+    vec3 col = base * (0.30 + 0.72 * diff * sun + fill) + vec3(spec * sun + rim);
+    o_col = vec4(col, u_alpha);
 }
 )";
 
@@ -111,7 +173,7 @@ void main() {
     gl_Position = u_vp * vec4(v_world, 1.0);
 }
 )";
-const char* kFlatFS = R"(#version 330 core
+const char* kFlatFS = "#version 330 core\n" YATZE_SHADOW_GLSL R"(
 in vec2 v_uv; in vec3 v_world;
 uniform int   u_mode;      // 0 felt, 1 shadow, 2 ring
 uniform vec3  u_color;
@@ -125,7 +187,7 @@ void main() {
         vec3 dark = vec3(0.025, 0.075, 0.05);            // = the clear colour: no horizon line
         float r = length(v_world.xz - vec2(0.0, -0.2));
         float grain = (hash(floor(v_world.xz * 90.0)) - 0.5) * 0.035;
-        vec3 lit = felt + grain;
+        vec3 lit = (felt + grain) * (0.40 + 0.60 * lit_by_sun(v_world, 0.0008));
         o_col = vec4(mix(lit, dark, smoothstep(4.0, 16.0, r)), 1.0);
     } else if (u_mode == 1) {
         float a = pow(1.0 - smoothstep(0.0, 1.0, d), 1.6) * u_strength;
@@ -195,6 +257,13 @@ struct Rng {
 };
 
 const Vec3 kLight = gfx::normalize(Vec3{0.45f, 1.0f, 0.55f});
+constexpr int kShadowSize = 2048;
+// The light's view: straight along kLight onto the table, wide enough for the
+// tray and the cup on its way out.
+Mat4 light_vp() {
+    const Vec3 c{0, 0, -1.0f};
+    return Mat4::ortho(11.0f, 11.0f, 1.0f, 50.0f) * Mat4::look_at(c + kLight * 25.0f, c, {0, 1, 0});
+}
 
 }  // namespace
 
@@ -253,6 +322,8 @@ void DiceView::set(const model::Dice& dice, const std::array<bool, 5>& held, boo
         m_from     = m_pose;
         m_phase    = Phase::Take;
         m_phase_t0 = -1;
+        m_cheer_t0 = -1e9;
+        m_cheer_pending = false;
         m_hover    = -1;                  // no stale highlight on a rolling die                  // anchored by the next tick (tick())
     }
     start_ticking();
@@ -281,6 +352,54 @@ void DiceView::reset_view() {
     m_user_view = false;
     m_sig_view.emit();
     start_ticking();
+}
+
+void DiceView::set_sound(bool on) {
+    m_sound = on;
+    if (!on && m_player) m_player->set_playing(false);   // hush now, mid-roll too
+}
+
+// ── the cheer (s012) ────────────────────────────────────────────────────────
+void DiceView::celebrate(gfx::Cheer kind) {
+    if (m_failed) return;
+    m_cheer_waves  = kind == gfx::Cheer::Yatze ? 2 : 3;
+    m_cheer_height = kind == gfx::Cheer::Yatze ? 0.8f : 1.0f;
+    m_cheer_pending = true;            // starts on the next frame (the tick clock)
+    m_cheer_t0 = -1e8;
+    if (m_sound && speed_scale() == 1.0) {
+        const auto dir = std::filesystem::path(Glib::get_user_runtime_dir()) / "yatze";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        const auto path = (dir / (kind == gfx::Cheer::Yatze ? "cheer-yatze.wav" : "cheer-over.wav")).string();
+        if (!std::filesystem::exists(path)) {
+            const auto bytes = gfx::wav(gfx::chime(kind));
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+        }
+        if (m_cheer_player) m_cheer_player->set_playing(false);
+        m_cheer_player = Gtk::MediaFile::create_for_filename(path);
+        m_cheer_player->set_volume(0.8);
+        m_cheer_player->play();
+    }
+    if (auto lg = log::get(log::Area::Shell)) lg->info("cheer: {}", kind == gfx::Cheer::Yatze ? "Yatze" : "game over");
+    start_ticking();
+}
+
+// Each die hops in turn (a wave left to right), turning once about the
+// vertical as it goes, so its result stays on top the whole time.
+DiceView::Pose DiceView::cheer_pose(int i, const Pose& p) const {
+    if (!celebrating() || m_cheer_t0 < -1e7) return p;
+    constexpr double kWave = 0.75, kStep = 0.08, kHop = 0.45;
+    const double e = m_now - m_cheer_t0;
+    for (int w = 0; w < m_cheer_waves; ++w) {
+        const double u = (e - w * kWave - i * kStep) / kHop;
+        if (u <= 0 || u >= 1) continue;
+        const float s = float(std::sin(u * kPi));
+        const float turn = float(gfx::ease_in_out(float(u))) * 2.0f * kPi;
+        const Quat spin = Quat::axis_angle({0, 1, 0}, turn);
+        return {p.pos + Vec3{0, s * m_cheer_height, 0}, gfx::normalize(spin * p.rot)};
+    }
+    return p;
 }
 
 void DiceView::set_red(bool red) {
@@ -358,6 +477,32 @@ void DiceView::plan_roll(std::uint64_t seed) {
     const auto cam = m_take.cams.back();
     m_roll_cam = {cam.eye, cam.at};
 
+    // Its sound, mixed now in one go (gfx/Sound) and started with the picture.
+    m_sound_ready = false;
+    if (m_sound && speed_scale() == 1.0) {
+        const auto t0 = std::chrono::steady_clock::now();
+        // At a quicker rate the knocks come sooner (same pitch): times scaled.
+        const double rate = m_rate;
+        auto contacts = m_take.contacts;
+        for (auto& c : contacts) c.t /= rate;
+        const auto bytes = gfx::wav(gfx::mix(contacts, [this, rate](double t) { return m_take.cam_at(t * rate); }, kFov,
+                                             m_aspect, m_take.duration() / rate + 0.35, seed ^ 0x50D0ull,
+                                             m_take.spill / rate, m_take.cup_at(m_take.spill * 0.5).pos));
+        // Two names in turn, so a new clip never overwrites the one still playing.
+        static int flip = 0;
+        flip ^= 1;
+        const auto dir = std::filesystem::path(Glib::get_user_runtime_dir()) / "yatze";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        m_sound_path = (dir / (flip ? "take-a.wav" : "take-b.wav")).string();
+        std::ofstream out(m_sound_path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+        m_sound_ready = bool(out);
+        if (auto lg = log::get(log::Area::Shell))
+            lg->debug("take sound: {} contacts, {} KB, mixed in {} ms", m_take.contacts.size(), bytes.size() / 1024,
+                      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+    }
+
     Rng r{seed ^ 0xA5A5A5A5ull};
     m_rest  = r.range(0.9f, 1.5f);
     m_glide = r.range(1.6f, 2.3f);
@@ -383,6 +528,8 @@ void DiceView::update_poses(double t, double dt) {
     if (m_phase == Phase::Glide && e_now() >= m_glide) { m_phase = Phase::Present; m_settled_pending = true; note("presented", t); }
     const double pe = t - m_phase_t0;
 
+    m_cup.shown = false;
+    m_in_cup = false;
     switch (m_phase) {
         case Phase::Present: {
             // The camera eases on an ARC (direction, then distance), so an
@@ -409,6 +556,8 @@ void DiceView::update_poses(double t, double dt) {
             for (int i = 0; i < 5; ++i) m_pose[i] = {dice[i].pos, dice[i].rot};
             const auto c = m_take.cam_at(pe);
             m_cam = {c.eye, c.at};
+            m_cup = m_take.cup_at(pe);
+            m_in_cup = pe < m_take.spill;
             break;
         }
         case Phase::Rolled: {
@@ -473,21 +622,41 @@ void DiceView::start_ticking() {
     m_tick_id = add_tick_callback(sigc::mem_fun(*this, &DiceView::tick));
 }
 
-bool DiceView::tick(const Glib::RefPtr<Gdk::FrameClock>& clock) {
-    // YATZE_SPEED=n plays everything n times faster -- for testing only.
+// YATZE_SPEED=n plays everything n times faster -- for testing only (silent).
+double DiceView::speed_scale() {
     static const double speed = [] {
         const char* e = std::getenv("YATZE_SPEED");
         const double v = e ? std::atof(e) : 1.0;
         return v > 0 ? v : 1.0;
     }();
-    const double t = double(clock->get_frame_time()) / 1e6 * speed;
-    const double dt = m_last < 0 ? 1.0 / 60 : std::min(0.1, t - m_last);
-    m_last = t;
+    return speed;
+}
+
+void DiceView::play_sound() {
+    if (!m_sound_ready || !m_sound) return;
+    m_sound_ready = false;
+    if (m_player) m_player->set_playing(false);
+    m_player = Gtk::MediaFile::create_for_filename(m_sound_path);
+    m_player->set_volume(0.9);
+    m_player->play();
+}
+
+bool DiceView::tick(const Glib::RefPtr<Gdk::FrameClock>& clock) {
+    // The table keeps its own clock, so the rate can change between rolls
+    // without a jump (s017: the computer's quick pace).
+    const double real = double(clock->get_frame_time()) / 1e6;
+    const double step = (m_last < 0 ? 1.0 / 60 : std::min(0.1, real - m_last)) * speed_scale() * m_rate;
+    m_last = real;
+    m_clock += step;
+    const double t = m_clock, dt = step;
     if (m_phase_t0 < 0) {                 // a roll starts on the first frame after it arrives
         m_phase_t0 = t;
         if (auto lg = log::get(log::Area::Shell)) lg->debug("dice view: take starts at {:.3f}", t);
+        if (m_phase == Phase::Take) play_sound();
     }
     m_now = t;
+    if (m_cheer_pending) { m_cheer_pending = false; m_cheer_t0 = t; }
+    if (celebrating() && m_cheer_t0 > -1e7 && t - m_cheer_t0 > 0.75 * m_cheer_waves + 0.6) m_cheer_t0 = -1e9;
     update_poses(t, dt);
     queue_render();
     if (m_settled_pending) { m_settled_pending = false; m_sig_settled.emit(); }
@@ -506,7 +675,7 @@ bool DiceView::tick(const Glib::RefPtr<Gdk::FrameClock>& clock) {
             if (std::fabs(m_lift[i] - (m_held[i] ? 1.0f : 0.0f)) > 1e-3f) moving = true;
         }
     }
-    if (moving || glowing) return true;
+    if (moving || glowing || celebrating()) return true;
     m_tick_id = 0;
     return false;
 }
@@ -567,6 +736,33 @@ bool DiceView::init_gl() {
     m_flat_prog = link(kFlatVS, kFlatFS, err);
     if (!m_flat_prog) { if (auto lg = log::get(log::Area::Shell)) lg->error("felt shader: {}", err); return false; }
 
+    // The light's depth map (s011). If it will not build, the blob shadows stay.
+    m_depth_prog = link(kDepthVS, kDepthFS, err);
+    if (m_depth_prog) {
+        glGenTextures(1, &m_shadow_tex);
+        glBindTexture(GL_TEXTURE_2D, m_shadow_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kShadowSize, kShadowSize, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        glGenFramebuffers(1, &m_shadow_fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_shadow_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_shadow_tex, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        m_shadows = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    } else if (auto lg = log::get(log::Area::Shell)) lg->warn("shadow shader: {}", err);
+    if (auto lg = log::get(log::Area::Shell)) lg->info("dice view: cast shadows {}", m_shadows ? "on" : "off (blobs)");
+    for (unsigned prog : {m_die_prog, m_flat_prog}) {
+        glUseProgram(prog);
+        glUniform1i(glGetUniformLocation(prog, "u_shadow"), 1);
+        glUniform1f(glGetUniformLocation(prog, "u_has_shadow"), 0.0f);
+    }
+
     // The face table, from the one place it is written down.
     glUseProgram(m_die_prog);
     const Vec3 axes[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
@@ -589,6 +785,60 @@ bool DiceView::init_gl() {
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(gfx::Vertex), nullptr);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(gfx::Vertex), reinterpret_cast<void*>(3 * sizeof(float)));
+
+    // The tray: its inner faces on the rails the physics uses (gfx::kRail*).
+    {
+        using namespace gfx;
+        const float t = kRailThick, depth = kRailFront - kRailBack + t;
+        struct Part { Vec3 c, half; };
+        const Part parts[3] = {
+            {{0, kBackWallHeight / 2, kRailBack - t / 2}, {kRailX + t, kBackWallHeight / 2, t / 2}},
+            {{-kRailX - t / 2, kSideRailHeight / 2, kRailFront - depth / 2}, {t / 2, kSideRailHeight / 2, depth / 2}},
+            {{ kRailX + t / 2, kSideRailHeight / 2, kRailFront - depth / 2}, {t / 2, kSideRailHeight / 2, depth / 2}},
+        };
+        MeshData all;
+        for (int k = 0; k < 3; ++k) {
+            auto part = rounded_box(parts[k].half, 0.12f, 10);
+            const auto base = std::uint32_t(all.verts.size());
+            m_tray_first[k] = int(all.index.size());
+            m_tray_count[k] = int(part.index.size());
+            for (auto v : part.verts) {
+                v.px += parts[k].c.x; v.py += parts[k].c.y; v.pz += parts[k].c.z;
+                all.verts.push_back(v);
+            }
+            for (auto i : part.index) all.index.push_back(base + i);
+        }
+        glGenVertexArrays(1, &m_tray_vao);
+        glBindVertexArray(m_tray_vao);
+        glGenBuffers(1, &m_tray_vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, m_tray_vbo);
+        glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(all.verts.size() * sizeof(Vertex)), all.verts.data(), GL_STATIC_DRAW);
+        glGenBuffers(1, &m_tray_ibo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_tray_ibo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(all.index.size() * 4), all.index.data(), GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), nullptr);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(3 * sizeof(float)));
+    }
+
+    // The cup.
+    {
+        const auto cup = gfx::cup_mesh(gfx::kCupRadius, gfx::kCupHeight);
+        m_cup_count = int(cup.index.size());
+        glGenVertexArrays(1, &m_cup_vao);
+        glBindVertexArray(m_cup_vao);
+        glGenBuffers(1, &m_cup_vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, m_cup_vbo);
+        glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(cup.verts.size() * sizeof(gfx::Vertex)), cup.verts.data(), GL_STATIC_DRAW);
+        glGenBuffers(1, &m_cup_ibo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_cup_ibo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(cup.index.size() * 4), cup.index.data(), GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(gfx::Vertex), nullptr);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(gfx::Vertex), reinterpret_cast<void*>(3 * sizeof(float)));
+    }
 
     const float quad[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
     glGenVertexArrays(1, &m_quad_vao);
@@ -613,9 +863,22 @@ void DiceView::free_gl() {
     if (m_die_vbo) glDeleteBuffers(1, &m_die_vbo);
     if (m_die_ibo) glDeleteBuffers(1, &m_die_ibo);
     if (m_quad_vbo) glDeleteBuffers(1, &m_quad_vbo);
+    if (m_tray_vbo) glDeleteBuffers(1, &m_tray_vbo);
+    if (m_tray_ibo) glDeleteBuffers(1, &m_tray_ibo);
+    if (m_tray_vao) glDeleteVertexArrays(1, &m_tray_vao);
+    m_tray_vao = m_tray_vbo = m_tray_ibo = 0;
+    if (m_cup_vbo) glDeleteBuffers(1, &m_cup_vbo);
+    if (m_cup_ibo) glDeleteBuffers(1, &m_cup_ibo);
+    if (m_cup_vao) glDeleteVertexArrays(1, &m_cup_vao);
+    m_cup_vao = m_cup_vbo = m_cup_ibo = 0;
     if (m_die_vao) glDeleteVertexArrays(1, &m_die_vao);
     if (m_quad_vao) glDeleteVertexArrays(1, &m_quad_vao);
     if (m_die_prog) glDeleteProgram(m_die_prog);
+    if (m_depth_prog) glDeleteProgram(m_depth_prog);
+    if (m_shadow_fbo) glDeleteFramebuffers(1, &m_shadow_fbo);
+    if (m_shadow_tex) glDeleteTextures(1, &m_shadow_tex);
+    m_depth_prog = m_shadow_fbo = m_shadow_tex = 0;
+    m_shadows = false;
     if (m_flat_prog) glDeleteProgram(m_flat_prog);
     m_fbo = m_fbo_color = m_fbo_depth = m_die_vbo = m_die_ibo = m_quad_vbo = 0;
     m_die_vao = m_quad_vao = m_die_prog = m_flat_prog = 0;
@@ -648,6 +911,47 @@ bool DiceView::on_render(const Glib::RefPtr<Gdk::GLContext>&) {
     const int scale = get_scale_factor();
     const int w = std::max(1, get_width() * scale), h = std::max(1, get_height() * scale);
     ensure_fbo(w, h);
+    const auto hidden = [&](int i) { return m_in_cup && !m_held[i]; };   // still in the cup
+    std::array<Pose, 5> P;                                               // with the cheer's hop (s012)
+    for (int i = 0; i < 5; ++i) P[i] = cheer_pose(i, m_pose[i]);
+
+    // The light's depth map (s011): dice, cup and tray, seen from the sun.
+    const Mat4 lvp = light_vp();
+    if (m_shadows) {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_shadow_fbo);
+        glViewport(0, 0, kShadowSize, kShadowSize);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);             // the cup is a thin shell
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(2.0f, 4.0f);
+        glUseProgram(m_depth_prog);
+        set_mat(m_depth_prog, "u_lvp", lvp);
+        glBindVertexArray(m_die_vao);
+        for (int i = 0; i < 5; ++i) {
+            if (hidden(i)) continue;
+            set_mat(m_depth_prog, "u_model", Mat4::translate(P[i].pos) * Mat4::rotate(P[i].rot));
+            glDrawElements(GL_TRIANGLES, m_die_count, GL_UNSIGNED_INT, nullptr);
+        }
+        set_mat(m_depth_prog, "u_model", Mat4{});
+        glBindVertexArray(m_tray_vao);
+        glDrawElements(GL_TRIANGLES, m_tray_first[2] + m_tray_count[2], GL_UNSIGNED_INT, nullptr);
+        if (m_cup.shown) {
+            set_mat(m_depth_prog, "u_model", Mat4::translate(m_cup.pos) * Mat4::rotate(m_cup.rot));
+            glBindVertexArray(m_cup_vao);
+            glDrawElements(GL_TRIANGLES, m_cup_count, GL_UNSIGNED_INT, nullptr);
+        }
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_shadow_tex);
+        glActiveTexture(GL_TEXTURE0);
+        for (unsigned prog : {m_die_prog, m_flat_prog}) {
+            glUseProgram(prog);
+            set_mat(prog, "u_lvp", lvp);
+            glUniform1f(glGetUniformLocation(prog, "u_has_shadow"), 1.0f);
+        }
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     glViewport(0, 0, w, h);
     glClearColor(0.025f, 0.075f, 0.05f, 1.0f);
@@ -687,20 +991,36 @@ bool DiceView::on_render(const Glib::RefPtr<Gdk::GLContext>&) {
         glUniform1f(glGetUniformLocation(m_flat_prog, "u_strength"), strength);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     };
+    // With cast shadows the blobs stay only as a faint contact darkening
+    // right under each die (the light cannot see under a die resting on the felt).
+    if (m_cup.shown && !m_shadows) {
+        const float hgt = std::max(0.0f, m_cup.pos.y - 1.0f);
+        const Vec3 at = m_cup.pos - Vec3{kLight.x, 0, kLight.z} * (0.3f + hgt * 0.35f);
+        decal(at, gfx::kCupRadius * 1.9f + hgt * 0.4f, 1, {}, 0.6f / (1.0f + hgt * 0.5f));
+    }
     for (int i = 0; i < 5; ++i) {
-        const Vec3 p = m_pose[i].pos;
+        if (hidden(i)) continue;
+        const Vec3 p = P[i].pos;
         const float height = std::max(0.0f, p.y - 0.5f);
         const Vec3 at = p - Vec3{kLight.x, 0, kLight.z} * (0.22f + height * 0.4f);
-        decal(at, 0.85f + height * 0.35f, 1, {}, 0.55f / (1.0f + height * 0.8f));
+        if (m_shadows) decal(p, 0.72f, 1, {}, 0.30f / (1.0f + height * 3.0f));
+        else           decal(at, 0.85f + height * 0.35f, 1, {}, 0.55f / (1.0f + height * 0.8f));
     }
     for (int i = 0; i < 5; ++i)
         if (m_lift[i] > 0.02f)
-            decal(m_pose[i].pos, 0.98f, 2, {0.25f, 0.55f, 1.0f}, 0.85f * m_lift[i]);
+            decal(P[i].pos, 0.98f, 2, {0.25f, 0.55f, 1.0f}, 0.85f * m_lift[i]);
     if (m_phase == Phase::Present) {
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ZERO, GL_ONE);   // the glow adds light
         const float pulse = 0.55f + 0.30f * std::sin(float(m_now) * 4.0f);
         for (int i = 0; i < 5; ++i)
-            if (m_glow[i]) decal(m_pose[i].pos, 0.90f, 2, {1.0f, 0.70f, 0.22f}, pulse);
+            if (m_glow[i]) decal(P[i].pos, 0.90f, 2, {1.0f, 0.70f, 0.22f}, pulse);
+    }
+    if (celebrating() && m_cheer_t0 > -1e7) {
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ZERO, GL_ONE);
+        const double e = m_now - m_cheer_t0, len = 0.75 * m_cheer_waves + 0.6;
+        const float env = float(std::min(1.0, e / 0.15) * std::min(1.0, (len - e) / 0.5));
+        for (int i = 0; i < 5; ++i)
+            decal(P[i].pos, 1.25f, 2, {1.0f, 0.78f, 0.25f}, std::max(0.0f, env) * (0.7f + 0.3f * float(std::sin(e * 9.0 - i))));
     }
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -711,6 +1031,8 @@ bool DiceView::on_render(const Glib::RefPtr<Gdk::GLContext>&) {
     set_mat(m_die_prog, "u_vp", vp);
     set_vec(m_die_prog, "u_eye", m_cam.eye);
     set_vec(m_die_prog, "u_light", kLight);
+    glUniform1f(glGetUniformLocation(m_die_prog, "u_wood"), 0.0f);
+    glUniform1f(glGetUniformLocation(m_die_prog, "u_alpha"), 1.0f);
     glBindVertexArray(m_die_vao);
     // Red: classic casino red, white pips, glossy. Ivory: warm white, black pips.
     const bool red = m_red;
@@ -719,13 +1041,57 @@ bool DiceView::on_render(const Glib::RefPtr<Gdk::GLContext>&) {
     set_vec(m_die_prog, "u_pip", pip_c);
     glUniform1f(glGetUniformLocation(m_die_prog, "u_gloss"), red ? 0.65f : 0.40f);
     for (int i = 0; i < 5; ++i) {
+        if (hidden(i)) continue;
         const bool blank = m_dice[i] == 0;
         Vec3 body = blank ? body_c * 0.72f : body_c;   // not rolled yet: a little dim, no pips
         if (i == m_hover) body = body * 1.06f;
         glUniform1f(glGetUniformLocation(m_die_prog, "u_blank"), blank ? 1.0f : 0.0f);
         set_vec(m_die_prog, "u_body", body);
-        set_mat(m_die_prog, "u_model", Mat4::translate(m_pose[i].pos) * Mat4::rotate(m_pose[i].rot));
+        set_mat(m_die_prog, "u_model", Mat4::translate(P[i].pos) * Mat4::rotate(P[i].rot));
         glDrawElements(GL_TRIANGLES, m_die_count, GL_UNSIGNED_INT, nullptr);
+    }
+
+    // The cup (s010), two-sided, while the take has it.
+    if (m_cup.shown) {
+        glDisable(GL_CULL_FACE);
+        glBindVertexArray(m_cup_vao);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_wood"), 2.0f);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_cup_h"), gfx::kCupHeight);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_blank"), 1.0f);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_gloss"), 0.22f);
+        set_vec(m_die_prog, "u_body", {0.24f, 0.10f, 0.06f});
+        set_mat(m_die_prog, "u_model", Mat4::translate(m_cup.pos) * Mat4::rotate(m_cup.rot));
+        glDrawElements(GL_TRIANGLES, m_cup_count, GL_UNSIGNED_INT, nullptr);
+        glEnable(GL_CULL_FACE);
+    }
+
+    // The tray. A rail you are looking THROUGH (the orb put you behind or
+    // beside it, below its top) is drawn faint, after the dice, so they show.
+    {
+        const Vec3 e = m_cam.eye;
+        const bool through[3] = {e.z < gfx::kRailBack && e.y < gfx::kBackWallHeight + 1.5f,
+                                 e.x < -gfx::kRailX && e.y < gfx::kSideRailHeight + 1.5f,
+                                 e.x >  gfx::kRailX && e.y < gfx::kSideRailHeight + 1.5f};
+        glBindVertexArray(m_tray_vao);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_wood"), 1.0f);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_blank"), 1.0f);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_gloss"), 0.18f);
+        set_vec(m_die_prog, "u_body", {0.30f, 0.17f, 0.09f});
+        set_mat(m_die_prog, "u_model", Mat4{});
+        const auto draw = [&](int k) {
+            glDrawElements(GL_TRIANGLES, m_tray_count[k], GL_UNSIGNED_INT,
+                           reinterpret_cast<void*>(std::uintptr_t(m_tray_first[k]) * 4));
+        };
+        for (int k = 0; k < 3; ++k)
+            if (!through[k]) draw(k);
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+        glDepthMask(GL_FALSE);
+        glUniform1f(glGetUniformLocation(m_die_prog, "u_alpha"), 0.22f);
+        for (int k = 0; k < 3; ++k)
+            if (through[k]) draw(k);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
     }
     glBindVertexArray(0);
 

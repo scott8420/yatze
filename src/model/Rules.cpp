@@ -65,6 +65,18 @@ std::string_view rule_text(Category c) {
 }
 
 bool is_yatze(const Dice& d) { return rolled(d) && max_count(d) == 5; }
+
+std::string dice_words(const Dice& d, const std::array<bool, 5>& held) {
+    if (!rolled(d)) return "Dice: not rolled yet";
+    std::string s = "Dice: ";
+    for (int i = 0; i < 5; ++i) s += std::to_string(d[std::size_t(i)]) + (i < 4 ? ", " : ".");
+    std::string h;
+    int n = 0;
+    for (int i = 0; i < 5; ++i)
+        if (held[std::size_t(i)]) h += (n++ ? ", " : "") + std::to_string(i + 1);
+    if (n) s += (n == 1 ? " Holding die " : " Holding dice ") + h + ".";
+    return s;
+}
 bool rolled(const Dice& d)   { return std::none_of(d.begin(), d.end(), [](int f) { return f < 1 || f > 6; }); }
 int  sum(const Dice& d)      { int s = 0; for (int f : d) s += f; return s; }
 

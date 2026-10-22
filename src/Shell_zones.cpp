@@ -1,4 +1,5 @@
 #include "Shell.hpp"
+#include "A11y.hpp"
 
 #include <gtkmm/gestureclick.h>
 #include <gtkmm/headerbar.h>
@@ -20,6 +21,7 @@ void Shell::build_shell() {  // zone: header + play area + scorecard
     m_logo_button.set_tooltip_text("About Yatzé!");
     m_logo_button.set_action_name("win.about");
     header->pack_start(m_logo_button);
+    a11y::label(m_logo_button, "About Yatz\u00e9!");
 
     m_new_button.set_label("New Game");
     m_new_button.set_tooltip_text("New game, same players  (Ctrl+N; Ctrl+Shift+N to change them)");
@@ -29,6 +31,10 @@ void Shell::build_shell() {  // zone: header + play area + scorecard
     m_menu_button.set_icon_name("open-menu-symbolic");
     m_menu_button.set_menu_model(build_menu());
     header->pack_end(m_menu_button);
+    a11y::label(m_menu_button, "Main menu");
+    m_sound_button.set_has_frame(false);
+    m_sound_button.set_action_name("win.sound");   // the same toggle as M and the menu item
+    header->pack_end(m_sound_button);
     set_titlebar(*header);
 
     // Play area: whose turn, the dice, Roll, what undo just did.
@@ -54,7 +60,22 @@ void Shell::build_shell() {  // zone: header + play area + scorecard
     m_reset_view.set_halign(Gtk::Align::CENTER);
     m_reset_view.set_action_name("win.reset-view");
     orb_box->append(m_reset_view);
+    a11y::label(m_reset_view, "Standard view");
+    a11y::label(m_orb, "View orb");
+    a11y::describe(m_orb, "Drag to turn the table; click an axis to look along it");
     m_table.add_overlay(*orb_box);
+    m_turn_name.add_css_class("title-1");
+    m_turn_info.add_css_class("turn-info");
+    m_turn_card.add_css_class("turn-card");
+    m_turn_card.append(m_turn_name);
+    m_turn_card.append(m_turn_info);
+    m_turn_reveal.set_child(m_turn_card);
+    m_turn_reveal.set_transition_type(Gtk::RevealerTransitionType::CROSSFADE);
+    m_turn_reveal.set_transition_duration(260);
+    m_turn_reveal.set_halign(Gtk::Align::CENTER);
+    m_turn_reveal.set_valign(Gtk::Align::CENTER);
+    m_turn_reveal.set_can_target(false);         // never in the way of a click on a die
+    m_table.add_overlay(m_turn_reveal);
     m_dice_stack.add(m_table, "3d");
     m_dice_stack.add(m_dice, "flat");
     m_dice_stack.set_visible_child("3d");
@@ -131,6 +152,13 @@ void Shell::build_drawers() {  // zone: overlay, two drawers, tabs, scrim
     m_right_tab.set_tooltip_text("Standings (Shift+F9)");
     m_right_tab.set_action_name("win.toggle-right-drawer");
 
+    // s014: the flying score, above the play area and the card.
+    m_fly.add_css_class("fly-score");
+    m_fly.set_halign(Gtk::Align::START);
+    m_fly.set_valign(Gtk::Align::START);
+    m_fly.set_can_target(false);
+    m_fly.set_visible(false);
+    m_overlay.add_overlay(m_fly);
     m_overlay.add_overlay(m_scrim);
     m_overlay.add_overlay(m_left_tab);
     m_overlay.add_overlay(m_right_tab);
@@ -155,7 +183,13 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     auto dice = Gio::Menu::create();   // radio items: the action's state is the choice
     dice->append("Red dice",   "win.dice-style::red");
     dice->append("Ivory dice", "win.dice-style::ivory");
+    dice->append("Dice sounds", "win.sound");
     menu->append_section(dice);
+
+    auto pace = Gio::Menu::create();   // s017: radio items, like the dice
+    pace->append("Computer: watch every roll", "win.computer-pace::watch");
+    pace->append("Computer: quicker", "win.computer-pace::quick");
+    menu->append_section(pace);
 
     auto view = Gio::Menu::create();
     view->append("Rules and hints", "win.toggle-left-drawer");

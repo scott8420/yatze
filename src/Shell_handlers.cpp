@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "Shell.hpp"
 #include "AboutWindow.hpp"
 #include "NewGameDialog.hpp"
@@ -33,7 +34,10 @@ void Shell::start_game(std::vector<model::Player> seats) {  // handler
     ++m_game_serial;
     m_recorded = false;
     m_news.clear();
-    model::verbs::new_game(m_store, m_journal, std::move(seats));
+    // YATZE_SEED=n: the same dice every time (testing only; like YATZE_SPEED).
+    std::uint64_t seed = 0;
+    if (const char* e = std::getenv("YATZE_SEED")) seed = std::strtoull(e, nullptr, 10);
+    model::verbs::new_game(m_store, m_journal, std::move(seats), seed);
     m_said.set_text("");
     if (auto lg = log::get(log::Area::Game)) lg->info("new game: {} seat(s)", m_seats.size());
 }
@@ -58,7 +62,9 @@ void Shell::on_hold(int die) {  // handler: 1-5 / click a die
 
 void Shell::on_score(model::Category c) {  // handler: click a box
     if (!human_turn() || m_dice3d.busy()) return;
+    const int who = m_store.state().current, before = m_store.state().player().card.total();
     if (model::verbs::score(m_store, m_journal, c)) {
+        fly_score(who, model::index(c), m_store.state().players[std::size_t(who)].card.total() - before);
         m_said.set_text(m_journal.undo_label());
         if (auto lg = log::get(log::Area::Game)) lg->info("{}", m_journal.undo_label());
     }
@@ -87,8 +93,10 @@ void Shell::on_computer_step() {  // handler
     if (step.kind == cpu::Step::Kind::None) { schedule_computer(); return; }   // waiting for the odds
     const bool scored = step.kind == cpu::Step::Kind::Score;
     const std::string who = m_store.state().player().name;
+    const int seat = m_store.state().current, before = m_store.state().player().card.total();
     cpu::apply(m_store, m_journal, step);
     if (scored) {
+        fly_score(seat, model::index(step.box), m_store.state().players[std::size_t(seat)].card.total() - before);
         if (auto lg = log::get(log::Area::Game)) lg->info("{}: {}", who, m_journal.undo_label());
         m_said.set_text(who + ": " + m_journal.undo_label());
         m_journal.clear();
@@ -105,6 +113,32 @@ void Shell::on_dice_style(const Glib::ustring& k) {  // handler: menu › Red / 
     if (!model::settings::parse(k, d)) return;
     m_act_dice->change_state(k);
     m_settings.dice = d;
+    model::settings::save(settings_file(), m_settings);
+    apply_settings();
+}
+
+void Shell::on_pace(const Glib::ustring& k) {  // handler: menu › Computer: watch every roll / quicker
+    model::settings::Pace p;
+    if (!model::settings::parse(k, p)) return;
+    m_act_pace->change_state(k);
+    m_settings.pace = p;
+    model::settings::save(settings_file(), m_settings);
+    if (auto lg = log::get(log::Area::Shell)) lg->info("computer pace: {}", k.raw());
+}
+
+void Shell::remember_window() {  // helper
+    m_settings.maximized = is_maximized();
+    if (!m_settings.maximized) {
+        int w = 0, h = 0;
+        get_default_size(w, h);              // GTK keeps this as the size you left it at
+        if (w >= 480 && h >= 400) { m_settings.width = w; m_settings.height = h; }
+    }
+    model::settings::save(settings_file(), m_settings);
+}
+
+void Shell::on_sound() {  // handler: menu › Dice sounds, or M
+    m_settings.sound = !m_settings.sound;
+    m_act_sound->change_state(m_settings.sound);
     model::settings::save(settings_file(), m_settings);
     apply_settings();
 }

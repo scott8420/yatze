@@ -42,6 +42,17 @@ struct PlayerStats {
     double      average = 0;
 };
 
+// s015: a player over time -- every total in the order played, and what the
+// recent games say next to the whole record.
+struct Trend {
+    std::vector<int> totals;        // oldest first
+    int    games = 0, best = 0, yatzes = 0, bonuses = 0;
+    double average = 0;             // all games
+    double recent = 0;              // the last kRecent games (all of them if fewer)
+    double bonus_rate = 0;          // share of games with the upper bonus, 0..1
+    static constexpr int kRecent = 10;
+};
+
 struct HighScore {
     int         total = 0;
     std::string who, when;
@@ -59,6 +70,7 @@ public:
     std::vector<HighScore>   top(std::size_t n = 10) const;
     // The best total `who` had BEFORE the last game (0 if none) -- for "a new best!".
     int previous_best(const std::string& who) const;
+    Trend trend(const std::string& who) const;         // s015
 
     bool load(const std::string& path);   // false (and empty) if missing / bad
     bool save(const std::string& path) const;

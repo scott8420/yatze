@@ -142,6 +142,9 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Mouse", "", {}, "Drag the orb", "Turn the table: look from any side or from above"},
         {"Mouse", "", {}, "Click an orb axis", "Look along that axis (X side, Y above, Z front)"},
 
+        // ── Sound ─────────────────────────────────────────────────────────────
+        {"Sound", "win.sound", {"m"}, "", "Dice sounds on / off"},
+
         // ── View ──────────────────────────────────────────────────────────────
         {"View", "win.reset-view", {"Home"}, "", "Back to the standard view"},
     };

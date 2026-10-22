@@ -22,10 +22,16 @@ public:
     // The hint's box (-1 none): outlined amber. Kept across set() calls.
     void set_suggested(int box);
     sigc::signal<void(model::Category)>& signal_pick() { return m_sig_pick; }
+    // s014: the cell of a player's box (nullptr if none), and a brief amber
+    // flash on it as a score lands (kept across set() until it fades).
+    Gtk::Widget* box_cell(int player, int box);
+    void flash(int player, int box);
 
 private:
     void clear();
     int  m_suggested = -1;
+    int  m_flash_player = -1, m_flash_box = -1;
+    sigc::connection m_flash_off;
     sigc::signal<void(model::Category)> m_sig_pick;
 };
 

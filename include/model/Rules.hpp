@@ -17,6 +17,7 @@
 //           else in any open lower box, where Full house / straights score in
 //           full; else in any open upper box for 0.
 #include <array>
+#include <string>
 #include <string_view>
 
 namespace yatze::model {
@@ -57,6 +58,9 @@ struct Card {
 };
 
 bool is_yatze(const Dice& d);
+// s018: the dice in words, for a screen reader:
+// "Dice: 3, 5, 5, 6, 2. Holding dice 2, 3." / "Dice: not rolled yet"
+std::string dice_words(const Dice& d, const std::array<bool, 5>& held);
 bool rolled(const Dice& d);               // no zero faces
 int  sum(const Dice& d);
 

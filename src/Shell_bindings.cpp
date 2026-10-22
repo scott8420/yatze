@@ -1,4 +1,5 @@
 #include "Shell.hpp"
+#include "A11y.hpp"
 #include "Log.hpp"
 
 #include <glibmm/main.h>
@@ -29,12 +30,30 @@ void Shell::bind_actions() {  // bindings
     m_dice3d.signal_view_changed().connect([this, reset] { reset->set_enabled(m_dice3d.user_view()); });
     add_action("clear-history", sigc::mem_fun(*this, &Shell::on_clear_history));
     m_act_dice = add_action_radio_string("dice-style", sigc::mem_fun(*this, &Shell::on_dice_style), "red");
+    m_act_sound = add_action_bool("sound", sigc::mem_fun(*this, &Shell::on_sound), true);
+    m_act_pace = add_action_radio_string("computer-pace", sigc::mem_fun(*this, &Shell::on_pace), "watch");
+    // The window's size, remembered (s017).
+    signal_close_request().connect([this] { remember_window(); return false; }, false);
 
     // The widgets ask; the handlers act through the verbs.
     m_dice.signal_die().connect(sigc::mem_fun(*this, &Shell::on_hold));
     m_dice3d.signal_die().connect(sigc::mem_fun(*this, &Shell::on_hold));
     // The roll has played out: reveal the card's options, let play go on.
-    m_dice3d.signal_settled().connect([this] { queue_repaint(); refresh_hints(); });
+    m_dice3d.signal_settled().connect([this] {
+        // s012: a Yatze rolled (anyone's) -- the dice cheer, unless the game
+        // just ended on it (then the game-over cheer has the floor).
+        if (auto lg = log::get(log::Area::Shell)) lg->debug("settled");
+        const auto& g = m_store.state();
+        if (g.rolls_used > 0 && model::is_yatze(g.dice) && !g.over()) m_dice3d.celebrate(gfx::Cheer::Yatze);
+        if (g.rolls_used > 0 && !g.players.empty()) {   // s018: what landed, spoken
+            std::string say = (g.player().name == "You" ? std::string("You rolled") : g.player().name + " rolled");
+            for (int f : g.dice) say += " " + std::to_string(f);
+            if (model::is_yatze(g.dice)) say += ". Yatz\u00e9!";
+            a11y::announce(*this, say);
+        }
+        queue_repaint();
+        refresh_hints();
+    });
     m_card.signal_pick().connect(sigc::mem_fun(*this, &Shell::on_score));
 
     // Model <-> journal <-> UI. The store asks the journal whether the door is
