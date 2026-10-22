@@ -2,6 +2,7 @@
 #include "Log.hpp"
 #include "gfx/DieFaces.hpp"
 #include "gfx/Mesh.hpp"
+#include "gfx/Overlap.hpp"
 #include "gfx/Sound.hpp"
 #include "gfx/Take.hpp"
 
@@ -587,28 +588,16 @@ void DiceView::update_poses(double t, double dt) {
                 m_pose[i].pos = gfx::lerp(m_scatter[i].pos, target.pos, u) + Vec3{0, lift, 0};
                 m_pose[i].rot = gfx::slerp(m_scatter[i].rot, target.rot, u);
             }
-            // Dice slide into line AROUND each other, not through (s005 frames
-            // showed paths crossing): any two at about the same height that come
-            // closer than a die's width are eased apart on the felt. Held dice
-            // stand firm. Fades out as they reach the row (spaced 1.32 anyway).
+            // Dice slide into line AROUND each other, not through: any two
+            // that would pass inside each other are parted by the exact test
+            // (gfx::part; s019 -- until then by centre distance, which let
+            // turned dice cross corners). Held dice stand firm.
             {
-                const float strength = 1.0f - gfx::smoothstep01((u - 0.75f) / 0.25f);
-                for (int pass = 0; pass < 6 && strength > 0; ++pass)
-                    for (int a = 0; a < 5; ++a)
-                        for (int b = a + 1; b < 5; ++b) {
-                            Vec3& pa = m_pose[a].pos;
-                            Vec3& pb = m_pose[b].pos;
-                            if (std::fabs(pa.y - pb.y) > 0.95f) continue;
-                            Vec3 d{pa.x - pb.x, 0, pa.z - pb.z};
-                            const float dl = gfx::length(d);
-                            if (dl >= 1.08f) continue;
-                            d = dl > 1e-4f ? d * (1.0f / dl) : Vec3{1, 0, 0};
-                            const float gap = (1.08f - dl) * strength;
-                            const float sa = m_held[a] ? 0.0f : m_held[b] ? 1.0f : 0.5f;
-                            const float sb = m_held[b] ? 0.0f : m_held[a] ? 1.0f : 0.5f;
-                            pa = pa + d * (gap * sa);
-                            pb = pb - d * (gap * sb);
-                        }
+                std::array<Vec3, 5> pos;
+                std::array<Quat, 5> rot;
+                for (int i = 0; i < 5; ++i) { pos[std::size_t(i)] = m_pose[i].pos; rot[std::size_t(i)] = m_pose[i].rot; }
+                gfx::part(pos, rot, m_held);
+                for (int i = 0; i < 5; ++i) m_pose[i].pos = pos[std::size_t(i)];
             }
             break;
         }

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libyatze_model.a CMakeFiles/yatze_model.dir/src/model/Rules.cpp.o CMakeFiles/yatze_model.dir/src/model/Game.cpp.o CMakeFiles/yatze_model.dir/src/model/Strategy.cpp.o CMakeFiles/yatze_model.dir/src/model/Computer.cpp.o CMakeFiles/yatze_model.dir/src/model/TableFile.cpp.o CMakeFiles/yatze_model.dir/src/model/Settings.cpp.o CMakeFiles/yatze_model.dir/src/model/Stats.cpp.o CMakeFiles/yatze_model.dir/src/model/Shortcuts.cpp.o
+/usr/bin/ranlib libyatze_model.a

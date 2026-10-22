@@ -81,6 +81,9 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.1.1" date="2026-10-21">
+      <description><p>Dice no longer pass into each other, through the cup, or bounce off thin air above the tray.</p></description>
+    </release>
     <release version="1.1.0" date="2026-10-21">
       <description><p>A quicker pace for computer players; the window remembers its size; screen-reader support.</p></description>
     </release>

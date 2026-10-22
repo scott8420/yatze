@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/scott/Develop/gtk/yatze-project/yatze/build-release/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

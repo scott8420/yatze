@@ -1,0 +1,1 @@
+/usr/lib64/ccache/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/yatze_selftest.dir/link.d CMakeFiles/yatze_selftest.dir/src/model/selftest.cpp.o -o yatze_selftest  libyatze_model.a libyatze_gfx.a

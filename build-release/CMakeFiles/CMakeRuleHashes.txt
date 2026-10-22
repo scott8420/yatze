@@ -1,0 +1,2 @@
+# Hashes of file build rules.
+a6794402b2552ad369dc2e29f49665ad yatze-resources.c

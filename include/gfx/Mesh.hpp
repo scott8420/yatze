@@ -65,6 +65,7 @@ inline MeshData rounded_box(const Vec3& half, float radius, int n) {
 // eye), so the inside shows when it tips toward you.
 inline MeshData cup_mesh(float r, float h, int n = 48) {
     MeshData m;
+    struct PN { Vec3 p, n; };                  // a point and its normal (not std::pair: GCC ABI notes)
     constexpr float kTau = 6.2831853f;
     const float lip = 0.07f, heel = 0.12f;
     auto grid = [&](int rows, auto at) {       // at(i, j) -> {pos, normal}; i around, j along
@@ -86,7 +87,7 @@ inline MeshData cup_mesh(float r, float h, int n = 48) {
     grid(8, [&](int i, int j) {
         const Vec3 d = ring(i);
         const float y = -h / 2 + heel + (h - heel - lip) * float(j) / 8.0f;
-        return std::pair{Vec3{d.x * r, y, d.z * r}, d};
+        return PN{Vec3{d.x * r, y, d.z * r}, d};
     });
     // The heel: a quarter round from the side into the base.
     grid(6, [&](int i, int j) {
@@ -94,13 +95,13 @@ inline MeshData cup_mesh(float r, float h, int n = 48) {
         const float a = float(j) / 6.0f * (kTau / 4);                 // 0 = side, 90 deg = base
         const Vec3 nrm = d * std::cos(a) + Vec3{0, -std::sin(a), 0};
         const Vec3 c{d.x * (r - heel), -h / 2 + heel, d.z * (r - heel)};
-        return std::pair{c + nrm * heel, nrm};
+        return PN{c + nrm * heel, nrm};
     });
     // The base.
     grid(4, [&](int i, int j) {
         const Vec3 d = ring(i);
         const float s = (r - heel) * (1.0f - float(j) / 4.0f);
-        return std::pair{Vec3{d.x * s, -h / 2, d.z * s}, Vec3{0, -1, 0}};
+        return PN{Vec3{d.x * s, -h / 2, d.z * s}, Vec3{0, -1, 0}};
     });
     // The rolled rim: a torus round the mouth.
     grid(10, [&](int i, int j) {
@@ -108,7 +109,7 @@ inline MeshData cup_mesh(float r, float h, int n = 48) {
         const float a = float(j) / 10.0f * kTau;
         const Vec3 nrm = d * std::cos(a) + Vec3{0, std::sin(a), 0};
         const Vec3 c{d.x * (r - lip * 0.4f), h / 2 - lip, d.z * (r - lip * 0.4f)};
-        return std::pair{c + nrm * lip, nrm};
+        return PN{c + nrm * lip, nrm};
     });
     return m;
 }

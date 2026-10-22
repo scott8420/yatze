@@ -11,6 +11,7 @@
 #include "gfx/Orbit.hpp"
 #include "gfx/Sound.hpp"
 #include "gfx/Take.hpp"
+#include "gfx/Overlap.hpp"
 #include "model/Computer.hpp"
 #include "model/Drawers.hpp"
 #include "model/Game.hpp"
@@ -633,18 +634,40 @@ int main() {
         check("3d: the rounded die fits its unit cube", inside && !mesh.index.empty());
     }
 
+    std::cout << "[3d: overlap]\n";
+    {
+        namespace gfx = yatze::gfx;
+        const gfx::Quat q0{}, q45 = gfx::Quat::axis_angle({0, 1, 0}, 0.7853982f);
+        check("overlap: side by side, a hair apart -- apart", gfx::overlap({1.01f, 0.5f, 0}, q0, {0, 0.5f, 0}, q0).depth <= 0);
+        const auto in = gfx::overlap({0.9f, 0.5f, 0}, q0, {0, 0.5f, 0}, q0);
+        check("overlap: 0.1 inside each other -- found, depth 0.1, out along +x",
+              std::fabs(in.depth - 0.1f) < 1e-4f && in.n.x > 0.99f);
+        // Centres 1.02 apart (what the old spread allowed) but one die turned
+        // 45 deg: its corner is 0.707 out, so they overlap by ~0.19.
+        const auto turned = gfx::overlap({1.02f, 0.5f, 0}, q45, {0, 0.5f, 0}, q0);
+        check("overlap: centres 1.02 apart, one turned 45 deg -- inside (the s019 bug)",
+              turned.depth > 0.15f && turned.depth < 0.22f, std::to_string(turned.depth));
+        check("overlap: the flat test agrees", std::fabs(gfx::overlap_flat({1.02f, 0.5f, 0}, q45, {0, 0.5f, 0}, q0).depth -
+                                                      turned.depth) < 1e-3f);
+        check("overlap: one die resting on another -- touching, not inside",
+              gfx::overlap({0.2f, 1.5f, 0.1f}, q0, {0, 0.5f, 0}, q0).depth <= 1e-4f);
+    }
+
     std::cout << "[3d: the take]\n";
     {
         namespace gfx = yatze::gfx;
         int wrong_face = 0, moved_held = 0, overlap = 0, off_table = 0, not_flat = 0, cropped = 0;
+        int deep_in_flight = 0, glide_overlap = 0, over_wall = 0;
+        float deepest = 0;
         int cup_over_rail = 0, cup_outside = 0, cup_cuts_held = 0, cup_in_felt = 0, cup_lingers = 0, cup_track = 0;
-        // A point against the cup (a solid cylinder): radial / axial distance outside it.
+        // A point against the cup (a solid cylinder): how far outside it (0 = inside).
+        // (A plain float: returning std::pair<float, float> drew a GCC ABI note.)
         auto cup_gap = [](const gfx::CupPose& c, const gfx::Vec3& p) {
             const gfx::Vec3 a = c.axis(), d = p - c.pos;
             const float ax = gfx::dot(d, a);
             const float rad = gfx::length(d - a * ax);
             const float or_ = std::max(0.0f, rad - gfx::kCupRadius), oa = std::max(0.0f, std::fabs(ax) - gfx::kCupHeight / 2);
-            return std::pair{rad, std::sqrt(or_ * or_ + oa * oa)};
+            return std::sqrt(or_ * or_ + oa * oa);
         };
         double tmin = 1e9, tmax = 0, tsum = 0;
         const int takes = 300;
@@ -670,19 +693,34 @@ int main() {
             if (!take.cups.empty() && take.cups.back().shown) ++cup_lingers;
             const std::size_t sf = std::size_t(std::lround(take.spill * gfx::Take::kFps));
             for (int i = 0; i < 5 && sf < take.cups.size(); ++i)
-                if (!shot.held[i] && cup_gap(take.cups[sf], take.frames[sf][i].pos).second > 0.45f) { ++cup_outside; break; }
+                if (!shot.held[i] && cup_gap(take.cups[sf], take.frames[sf][i].pos) > 0.45f) { ++cup_outside; break; }
             for (std::size_t f = 0; f < take.cups.size(); ++f) {
                 const auto& c = take.cups[f];
                 if (!c.shown) continue;
                 const float ay = std::fabs(c.axis().y);
                 const float low = c.pos.y - gfx::kCupHeight / 2 * ay - gfx::kCupRadius * std::sqrt(std::max(0.0f, 1 - ay * ay));
                 if (low < -0.3f) { ++cup_in_felt; break; }
-                // Its reach across the table (a bound): past a side rail, it must be above it.
-                const float reach = std::fabs(c.pos.x) + gfx::kCupHeight / 2 * std::fabs(c.axis().x) + gfx::kCupRadius;
-                if (reach > gfx::kRailX && low < gfx::kSideRailHeight + 0.05f) { ++cup_over_rail; break; }
+                // Never inside a side rail: points round the cup's rim, base
+                // and middle, against each rail's box (s019: exact, not a bound).
+                {
+                    const gfx::Vec3 ax = c.axis();
+                    const gfx::Vec3 u1 = gfx::normalize(gfx::cross(ax, std::fabs(ax.y) < 0.9f ? gfx::Vec3{0, 1, 0} : gfx::Vec3{1, 0, 0}));
+                    const gfx::Vec3 u2 = gfx::cross(ax, u1);
+                    bool hit = false;
+                    for (float h : {-0.5f, 0.0f, 0.5f})
+                        for (int k3 = 0; k3 < 24 && !hit; ++k3) {
+                            const float an = float(k3) / 24.0f * 6.2831853f;
+                            const gfx::Vec3 q = c.pos + ax * (h * gfx::kCupHeight) +
+                                                (u1 * std::cos(an) + u2 * std::sin(an)) * gfx::kCupRadius;
+                            if (std::fabs(q.x) > gfx::kRailX && std::fabs(q.x) < gfx::kRailX + gfx::kRailThick &&
+                                q.y < gfx::kSideRailHeight && q.z > gfx::kRailBack - gfx::kRailThick && q.z < gfx::kRailFront)
+                                hit = true;
+                        }
+                    if (hit) { ++cup_over_rail; break; }
+                }
                 bool cut = false;
                 for (int i = 0; i < 5; ++i)
-                    if (shot.held[i] && cup_gap(c, take.frames[f][i].pos).second < 0.6f) cut = true;
+                    if (shot.held[i] && cup_gap(c, take.frames[f][i].pos) < 0.6f) cut = true;
                 if (cut) { ++cup_cuts_held; break; }
             }
             for (int i = 0; i < 5; ++i) {
@@ -697,7 +735,58 @@ int main() {
                 if (std::fabs(end[i].pos.x) > gfx::kRailX || end[i].pos.z < gfx::kRailBack || end[i].pos.z > gfx::kRailFront)
                     ++off_table;
                 for (int j = i + 1; j < 5; ++j)
-                    if (gfx::length(end[i].pos - end[j].pos) < 0.97f) ++overlap;
+                    if (gfx::overlap(end[i].pos, end[i].rot, end[j].pos, end[j].rot).depth > 0.0f) ++overlap;
+            }
+            // s019: no two dice inside each other at any frame (beyond a hair
+            // the rounded edges hide: the exact test is for sharp cubes).
+            {
+                bool deep = false;
+                for (std::size_t f = 0; f < take.frames.size(); ++f)
+                    for (int i = 0; i < 5; ++i)
+                        for (int j = i + 1; j < 5; ++j) {
+                            const float d = gfx::overlap(take.frames[f][i].pos, take.frames[f][i].rot,
+                                                         take.frames[f][j].pos, take.frames[f][j].rot).depth;
+                            deepest = std::max(deepest, d);
+                            if (d > 0.06f) deep = true;
+                        }
+                deep_in_flight += deep;
+            }
+            // At the tray's walls a die stays below their top (s019: it bounced
+            // off thin air above the drawn wall).
+            {
+                const std::size_t sp = std::size_t(std::lround(take.spill * gfx::Take::kFps)) + 3;
+                bool over = false;
+                for (std::size_t f = sp; f < take.frames.size(); ++f)
+                    for (const auto& d : take.frames[f])
+                        if ((d.pos.z < gfx::kRailBack + 0.9f && d.pos.y > gfx::kBackWallHeight) ||
+                            (std::fabs(d.pos.x) > gfx::kRailX - 0.9f && d.pos.y > gfx::kSideRailHeight + 0.2f)) over = true;
+                over_wall += over;
+            }
+            // ... nor while they glide into the row (DiceView's motion: a lerp
+            // with each die arcing at its own height, then gfx::part).
+            {
+                std::array<gfx::Vec3, 5> to;
+                std::array<gfx::Quat, 5> to_q;
+                for (int i = 0; i < 5; ++i) {
+                    to[std::size_t(i)] = {(float(i) - 2.0f) * 1.32f, 0.5f, 1.2f + (shot.held[i] ? 0.45f : 0.0f)};
+                    to_q[std::size_t(i)] = gfx::show(shot.values[i], {0, 1, 0});
+                }
+                bool bad = false;
+                for (int k2 = 0; k2 <= 60 && !bad; ++k2) {
+                    const float u = gfx::ease_in_out(float(k2) / 60.0f);
+                    std::array<gfx::Vec3, 5> pos;
+                    std::array<gfx::Quat, 5> rot;
+                    for (int i = 0; i < 5; ++i) {
+                        const float lift = shot.held[i] ? 0.0f : std::sin(u * 3.14159265f) * (0.35f + 0.18f * float(i));
+                        pos[std::size_t(i)] = gfx::lerp(end[i].pos, to[std::size_t(i)], u) + gfx::Vec3{0, lift, 0};
+                        rot[std::size_t(i)] = gfx::slerp(end[i].rot, to_q[std::size_t(i)], u);
+                    }
+                    gfx::part(pos, rot, shot.held);
+                    for (int i = 0; i < 5; ++i)
+                        for (int j = i + 1; j < 5; ++j)
+                            if (gfx::overlap(pos[std::size_t(i)], rot[std::size_t(i)], pos[std::size_t(j)], rot[std::size_t(j)]).depth > 0.02f) bad = true;
+                }
+                glide_overlap += bad;
             }
             // Never cropped: every die's centre (plus a margin) inside the frame, every frame.
             for (std::size_t f = 0; f < take.frames.size(); ++f) {
@@ -722,7 +811,16 @@ int main() {
         check("take: every take ends on the drawn faces", wrong_face == 0, std::to_string(wrong_face));
         check("take: every die ends flat on the felt", not_flat == 0, std::to_string(not_flat));
         check("take: held dice never move", moved_held == 0, std::to_string(moved_held));
-        check("take: no two dice end inside each other", overlap == 0, std::to_string(overlap));
+        check("take: no two dice end inside each other (exact test)", overlap == 0, std::to_string(overlap));
+        {
+            char dbuf[64];
+            std::snprintf(dbuf, sizeof dbuf, "%d takes; deepest %.3f", deep_in_flight, deepest);
+            check("take: no two dice inside each other in any frame (> 0.06)", deep_in_flight == 0, dbuf);
+        }
+        check("take: at the tray's walls the dice stay below their top (99% of takes)", over_wall <= takes / 100,
+              std::to_string(over_wall) + " takes");
+        check("take: the glide into the row never passes one die through another", glide_overlap == 0,
+              std::to_string(glide_overlap) + " takes");
         check("take: the dice stay on the table", off_table == 0, std::to_string(off_table));
         check("take: the camera never crops a die (every frame)", cropped == 0, std::to_string(cropped) + " takes cropped");
         check("take: lengths vary (1..6 s with the cup), none instant, none endless", tmin > 1.0 && tmax < 6.0 && tmax - tmin > 0.8, buf);

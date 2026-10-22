@@ -1,0 +1,5 @@
+/home/scott/.local/bin/yatze
+/home/scott/.local/share/applications/io.github.scott8420.Yatze.desktop
+/home/scott/.local/share/icons/hicolor/scalable/apps/io.github.scott8420.Yatze.svg
+/home/scott/.local/share/icons/hicolor/symbolic/apps/io.github.scott8420.Yatze-symbolic.svg
+/home/scott/.local/share/metainfo/io.github.scott8420.Yatze.metainfo.xml

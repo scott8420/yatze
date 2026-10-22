@@ -87,6 +87,6 @@ Take shoot(const Shot& shot);
 // inner faces exactly on these planes; your side is open (the front plane
 // only keeps a stray die from rolling into your lap, and makes no sound).
 inline constexpr float kRailX = 3.7f, kRailBack = -3.5f, kRailFront = 1.05f;
-inline constexpr float kBackWallHeight = 2.0f, kSideRailHeight = 1.2f, kRailThick = 0.5f;
+inline constexpr float kBackWallHeight = 2.4f, kSideRailHeight = 1.4f, kRailThick = 0.5f;   // s019: a touch taller
 
 }  // namespace yatze::gfx

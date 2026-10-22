@@ -1,0 +1,10 @@
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/yatze_model.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/yatze_gfx.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/yatze_selftest.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/yatze.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/edit_cache.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/rebuild_cache.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/list_install_components.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/install.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/install/local.dir
+/home/scott/Develop/gtk/yatze-project/yatze/build-release/CMakeFiles/install/strip.dir

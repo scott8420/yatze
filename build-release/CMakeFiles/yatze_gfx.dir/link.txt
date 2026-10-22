@@ -1,0 +1,2 @@
+/usr/bin/ar qc libyatze_gfx.a CMakeFiles/yatze_gfx.dir/src/gfx/Take.cpp.o CMakeFiles/yatze_gfx.dir/src/gfx/Sound.cpp.o
+/usr/bin/ranlib libyatze_gfx.a

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.1 — 2026-10-21
+
+- **Dice never overlap** (Scott: "check your collision control"). The
+  physics now tests dice against each other exactly -- edge on edge and
+  face on face, not only corners -- and knocks them apart with a real bounce
+  and click. Dice at rest, dice laying themselves flat, and dice gliding
+  into the row are all kept apart by the same test.
+- The dice lie **inside** the cup and pour out of its mouth; the cup slides
+  back off them before it lifts away (it used to pass through them).
+- A soft ceiling: a knock no longer throws a die higher than the tray, and
+  the tray's walls are a little taller -- no more bouncing off thin air.
+
 ## 1.1.0 — 2026-10-21
 
 - **Computer pace** (menu): *Watch every roll* (as before) or *Quicker* --
